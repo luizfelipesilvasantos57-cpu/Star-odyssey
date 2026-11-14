@@ -1,0 +1,6 @@
+{
+  "name": "Star Odyssey",
+  "description": "Star Odyssey — Android native launcher, binary dump validator (NSP/XCI/NSO0/prod.keys), RomFS mod manager, controller/gyro mapper, and 3D Vulkan/GLES pipeline runtime.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

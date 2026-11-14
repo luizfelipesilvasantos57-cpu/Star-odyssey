@@ -1,0 +1,51 @@
+<resources>
+    <string name="app_name">Star Odyssey</string>
+
+    <!-- Navigation Tabs -->
+    <string name="nav_home">Início</string>
+    <string name="nav_setup">Arquivos</string>
+    <string name="nav_graphics">Gráficos</string>
+    <string name="nav_mods">Mods</string>
+    <string name="nav_controls">Controles</string>
+
+    <!-- Dashboard -->
+    <string name="hero_badge">ANDROID NATIVE PORT • RECOMP v1.0</string>
+    <string name="hero_title">Star Odyssey</string>
+    <string name="hero_subtitle">Runtime nativo, validador NSP/XCI/NSO0, gerenciador RomFS e pipeline 3D para Android.</string>
+    <string name="btn_launch_runtime">Iniciar Runtime 3D</string>
+    <string name="btn_configure_dump">Configurar Dump</string>
+    <string name="section_readiness">Status do Sistema (BYOD)</string>
+    <string name="section_hardware">Telemetria do Dispositivo</string>
+    <string name="byod_notice_title">Arquitetura Bring Your Own Dump (BYOD)</string>
+    <string name="byod_notice_body">Este projeto não inclui arquivos protegidos por direitos autorais. Importe seu próprio dump legal (NSP, XCI, NSO0 ou RomFS) e suas chaves prod.keys via Seletor Seguro do Android.</string>
+
+    <!-- Setup / Dump Screen -->
+    <string name="setup_header_title">Validador de Dump &amp; Chaves</string>
+    <string name="setup_header_sub">Analisador binário real para prod.keys, PFS0 (.nsp), HFS0 (.xci), NSO0 (main) e árvore RomFS.</string>
+    <string name="btn_import_keys">Importar prod.keys</string>
+    <string name="btn_import_container">Importar NSP / XCI / NSO0</string>
+    <string name="btn_import_romfs">Selecionar Pasta RomFS</string>
+    <string name="btn_clear_dumps">Limpar Dados Importados</string>
+
+    <!-- Graphics & Audio -->
+    <string name="gfx_header_title">Pipeline Gráfico &amp; Áudio</string>
+    <string name="gfx_header_sub">Configurações equivalentes ao Super Odyssey Recomp exportáveis para recomp_config.json.</string>
+    <string name="btn_export_config">Exportar recomp_config.json</string>
+    <string name="btn_reset_config">Restaurar Padrões</string>
+
+    <!-- Mods -->
+    <string name="mods_header_title">Gerenciador de Mods RomFS</string>
+    <string name="mods_header_sub">Importe pacotes .zip ou pastas com substituições de StageData, ObjectData, SoundData e trajes.</string>
+    <string name="btn_import_mod_zip">Importar Mod (.zip)</string>
+    <string name="btn_import_mod_folder">Importar Pasta Mod</string>
+
+    <!-- Controls -->
+    <string name="ctrl_header_title">Controles, Giroscópio &amp; Vibração</string>
+    <string name="ctrl_header_sub">Monitor ao vivo de gamepads Bluetooth/USB, sensor giroscópio para arremesso e sobreposição tátil.</string>
+    <string name="btn_test_rumble">Testar Vibração</string>
+
+    <!-- Runtime Viewport -->
+    <string name="runtime_title">Pipeline Gráfico &amp; Controle 3D</string>
+    <string name="runtime_menu_title">Menu In-Game (Recomp)</string>
+    <string name="cd_hero_banner">Banner artístico da lua dourada PowerMoon Recompiled</string>
+</resources>
