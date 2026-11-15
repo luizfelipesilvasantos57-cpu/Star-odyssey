@@ -18,25 +18,27 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.core.Arm64StaticLifter
 import com.example.core.AudioSynthEngine
 import com.example.core.HardwareProbe
+import com.example.core.RecompExecutionEngine
 import com.example.core.RecompRepository
 import com.example.core.ShaderCacheManager
-import com.example.core.SwitchFormatParser
 import com.example.model.AspectRatioMode
-import com.example.model.BootSessionState
 import com.example.model.DeviceCapabilities
 import com.example.model.DumpSourceType
 import com.example.model.GameDumpReport
 import com.example.model.KeysValidationResult
+import com.example.model.LiftedFunctionMeta
 import com.example.model.LiveGamepadState
 import com.example.model.QualityPreset
 import com.example.model.RecompConfig
 import com.example.model.RecompTab
+import com.example.model.RecompileSessionState
 import com.example.model.ResolutionScale
 import com.example.model.RomfsMod
-import com.example.model.RuntimeRenderMode
-import com.example.model.RuntimeTelemetry
+import com.example.model.SarcArchiveReport
+import com.example.model.SarcEntry
 import com.example.model.ShaderCacheReport
 import com.example.model.TargetFramerate
 import com.example.model.UpscalerMode
@@ -75,17 +77,17 @@ class RecompViewModel(application: Application) : AndroidViewModel(application),
     private val _gamepadState = MutableStateFlow(LiveGamepadState())
     val gamepadState: StateFlow<LiveGamepadState> = _gamepadState.asStateFlow()
 
-    private val _runtimeTelemetry = MutableStateFlow(RuntimeTelemetry())
-    val runtimeTelemetry: StateFlow<RuntimeTelemetry> = _runtimeTelemetry.asStateFlow()
-
-    private val _runtimeRenderMode = MutableStateFlow(RuntimeRenderMode.SHADED)
-    val runtimeRenderMode: StateFlow<RuntimeRenderMode> = _runtimeRenderMode.asStateFlow()
-
     private val _isBgmActive = MutableStateFlow(false)
     val isBgmActive: StateFlow<Boolean> = _isBgmActive.asStateFlow()
 
-    private val _bootSession = MutableStateFlow(BootSessionState())
-    val bootSession: StateFlow<BootSessionState> = _bootSession.asStateFlow()
+    private var loadedNsoSession: Arm64StaticLifter.LoadedNsoSession? = null
+    private var loadedSarcPayload: ByteArray? = null
+
+    private val _recompileState = MutableStateFlow(RecompileSessionState())
+    val recompileState: StateFlow<RecompileSessionState> = _recompileState.asStateFlow()
+
+    private val _sarcReport = MutableStateFlow<SarcArchiveReport?>(null)
+    val sarcReport: StateFlow<SarcArchiveReport?> = _sarcReport.asStateFlow()
 
     private val _showMissingDumpDialog = MutableStateFlow(false)
     val showMissingDumpDialog: StateFlow<Boolean> = _showMissingDumpDialog.asStateFlow()
@@ -141,7 +143,7 @@ class RecompViewModel(application: Application) : AndroidViewModel(application),
         _showMissingDumpDialog.value = false
     }
 
-    fun launchGame() {
+    fun launchRecompiler() {
         val currentDump = dumpReport.value
         if (currentDump == null || !currentDump.magicValid) {
             _showMissingDumpDialog.value = true
@@ -157,78 +159,209 @@ class RecompViewModel(application: Application) : AndroidViewModel(application),
                     } else {
                         currentDump
                     }
-                prepareAndLaunchBootSession(effectiveDump)
+
+                val nsoUriStr = effectiveDump.mainNsoUriString
+                if (!nsoUriStr.isNullOrBlank()) {
+                    try {
+                        runNsoLifter(Uri.parse(nsoUriStr), effectiveDump)
+                        _currentTab.value = RecompTab.RUNTIME
+                        return@launch
+                    } catch (e: Exception) {
+                        _recompileState.value = RecompileSessionState(
+                            isReady = false,
+                            sourceName = effectiveDump.fileName,
+                            titleId = effectiveDump.titleIdDetected,
+                            programName = effectiveDump.programName,
+                            noticeMessage = "Não foi possível reabrir ${effectiveDump.fileName}: ${e.message}. Selecione seu ExeFS/main abaixo."
+                        )
+                        _currentTab.value = RecompTab.RUNTIME
+                        return@launch
+                    }
+                }
+
+                _recompileState.value = RecompileSessionState(
+                    isReady = false,
+                    sourceName = effectiveDump.fileName,
+                    titleId = effectiveDump.titleIdDetected,
+                    programName = effectiveDump.programName,
+                    noticeMessage = "Dump atual (${effectiveDump.sourceType.label}) não contém um executável ExeFS/main (NSO0) descompactado. Selecione o arquivo main do ExeFS para gerar o código C++."
+                )
+                _currentTab.value = RecompTab.RUNTIME
             } finally {
                 _isBusy.value = false
             }
         }
     }
 
-    fun importRomfsAndLaunch(treeUri: Uri) {
+    fun importRomfsAndRecompile(treeUri: Uri) {
         viewModelScope.launch {
             _isBusy.value = true
             _showMissingDumpDialog.value = false
             try {
                 val report = repo.importRomfsTree(treeUri)
-                if (report.magicValid) {
-                    prepareAndLaunchBootSession(report)
+                if (report.mainNsoUriString != null) {
+                    runNsoLifter(Uri.parse(report.mainNsoUriString), report)
+                    _currentTab.value = RecompTab.RUNTIME
+                } else if (report.magicValid) {
+                    _recompileState.value = RecompileSessionState(
+                        isReady = false,
+                        sourceName = report.fileName,
+                        titleId = report.titleIdDetected,
+                        programName = report.programName,
+                        noticeMessage = "RomFS montado (${report.romfsFileCount} arquivos), mas ExeFS/main não estava nesta pasta. Selecione o arquivo main (NSO0) abaixo ou inspecione um .szs na aba RomFS."
+                    )
+                    _currentTab.value = RecompTab.RUNTIME
                 } else {
-                    _feedbackMessage.value = "Pasta verificada, mas nenhum StageData/RomFS ou ExeFS (main) válido foi encontrado."
+                    _feedbackMessage.value = "Nenhum RomFS ou ExeFS (main) válido encontrado nesta pasta."
                 }
             } catch (e: Exception) {
-                _feedbackMessage.value = "Erro ao montar RomFS/ExeFS: ${e.message}"
+                _feedbackMessage.value = "Erro ao abrir pasta RomFS/ExeFS: ${e.message}"
             } finally {
                 _isBusy.value = false
             }
         }
     }
 
-    private suspend fun prepareAndLaunchBootSession(dump: GameDumpReport) {
-        if (!_shaderCacheReport.value.isCompiled) {
-            val shaderReport = withContext(Dispatchers.Default) {
-                ShaderCacheManager.precompilePipelineShaders(getApplication())
+    fun recompileFromNsoUri(nsoUri: Uri) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            _showMissingDumpDialog.value = false
+            try {
+                val dump = repo.importBinaryDump(nsoUri)
+                runNsoLifter(nsoUri, dump)
+                _currentTab.value = RecompTab.RUNTIME
+            } catch (e: Exception) {
+                _feedbackMessage.value = "Falha ao recompilar NSO0: ${e.message}"
+            } finally {
+                _isBusy.value = false
             }
-            _shaderCacheReport.value = shaderReport
+        }
+    }
+
+    fun selectLiftedFunction(fn: LiftedFunctionMeta) {
+        val session = loadedNsoSession ?: return
+        viewModelScope.launch {
+            val preview = withContext(Dispatchers.Default) {
+                Arm64StaticLifter.liftFunctionPreview(session.textBytes, fn)
+            }
+            _recompileState.value = _recompileState.value.copy(
+                selectedFunction = fn,
+                previewLines = preview
+            )
+        }
+    }
+
+    fun executeRecompiledFunction(fn: LiftedFunctionMeta) {
+        val session = loadedNsoSession ?: return
+        viewModelScope.launch {
+            val exec = withContext(Dispatchers.Default) {
+                RecompExecutionEngine.execute(session, fn.startOffset)
+            }
+            val preview = withContext(Dispatchers.Default) {
+                Arm64StaticLifter.liftFunctionPreview(session.textBytes, fn)
+            }
+            _recompileState.value = _recompileState.value.copy(
+                selectedFunction = fn,
+                previewLines = preview,
+                execResult = exec
+            )
+            _feedbackMessage.value = "Executado ${fn.name}: ${exec.stepsExecuted} passo(s)."
+        }
+    }
+
+    fun exportRecompiledProjectZip(targetUri: Uri) {
+        val session = loadedNsoSession
+        if (session == null) {
+            _feedbackMessage.value = "Carregue um arquivo ExeFS/main (NSO0) antes de exportar."
+            return
+        }
+        viewModelScope.launch {
+            _isBusy.value = true
+            try {
+                val dump = dumpReport.value
+                repo.exportRecompiledZip(
+                    uri = targetUri,
+                    session = session,
+                    titleId = dump?.titleIdDetected,
+                    programName = dump?.programName
+                )
+                _feedbackMessage.value = "Projeto C++/CMake exportado (${session.functions.size} funções analisadas)."
+            } catch (e: Exception) {
+                _feedbackMessage.value = "Erro ao exportar projeto C++: ${e.message}"
+            } finally {
+                _isBusy.value = false
+            }
+        }
+    }
+
+    fun inspectRomfsSzs(uri: Uri) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            try {
+                val (report, payload) = repo.inspectSzsArchive(uri)
+                loadedSarcPayload = payload
+                _sarcReport.value = report
+                _feedbackMessage.value = "RomFS '${report.fileName}' descomprimido (${report.entries.size} entradas)."
+            } catch (e: Exception) {
+                _feedbackMessage.value = "Erro ao descomprimir .szs/SARC: ${e.message}"
+            } finally {
+                _isBusy.value = false
+            }
+        }
+    }
+
+    fun exportSarcEntry(targetUri: Uri, entry: SarcEntry) {
+        val payload = loadedSarcPayload ?: return
+        viewModelScope.launch {
+            try {
+                repo.exportSarcEntry(targetUri, payload, entry)
+                _feedbackMessage.value = "Arquivo '${entry.name}' extraído."
+            } catch (e: Exception) {
+                _feedbackMessage.value = "Erro ao extrair arquivo SARC: ${e.message}"
+            }
+        }
+    }
+
+    private suspend fun runNsoLifter(nsoUri: Uri, dump: GameDumpReport?) {
+        val session = withContext(Dispatchers.Default) {
+            repo.loadNsoForRecompile(nsoUri)
+        }
+        loadedNsoSession = session
+        val firstFn = session.functions.firstOrNull()
+        val preview = if (firstFn != null) {
+            withContext(Dispatchers.Default) {
+                Arm64StaticLifter.liftFunctionPreview(session.textBytes, firstFn)
+            }
+        } else {
+            emptyList()
+        }
+        val exec = if (firstFn != null) {
+            withContext(Dispatchers.Default) {
+                RecompExecutionEngine.execute(session, firstFn.startOffset)
+            }
+        } else {
+            null
         }
 
-        val cfg = config.value
-        val activeMods = mods.value.filter { it.enabled }
-        val logs = buildList {
-            add("[FS] Origem montada: ${dump.fileName} (${dump.sourceType.label})")
-            if (!dump.programName.isNullOrBlank() || !dump.titleIdDetected.isNullOrBlank()) {
-                add("[ExeFS] main.npdm: ${dump.programName ?: "Desconhecido"} • TitleID=${dump.titleIdDetected ?: "N/A"}")
-            }
-            if (!dump.buildIdHex.isNullOrBlank() || dump.nsoTextSize > 0L) {
-                add(
-                    "[NSO0] ExeFS/main • .text=${SwitchFormatParser.formatByteSize(dump.nsoTextSize)} " +
-                        "• .rodata=${SwitchFormatParser.formatByteSize(dump.nsoRodataSize)} " +
-                        "• BuildID=${dump.buildIdHex?.take(16) ?: "N/A"}"
-                )
-            }
-            if (dump.romfsFileCount > 0 || dump.romfsFoldersFound.isNotEmpty()) {
-                add(
-                    "[RomFS] ${dump.romfsFileCount} arquivo(s) (${SwitchFormatParser.formatByteSize(dump.fileSizeBytes)}) • " +
-                        "Pastas: ${dump.romfsFoldersFound.joinToString(", ").ifEmpty { "raiz" }}"
-                )
-            }
-            if (activeMods.isNotEmpty()) {
-                add("[Mods] Overlay RomFS: ${activeMods.joinToString { it.name }}")
-            } else {
-                add("[Mods] Nenhum mod RomFS ativo")
-            }
-            add("[GPU] ${cfg.graphicsBackend.label} • ${cfg.resolutionScale.badge} @ ${cfg.targetFramerate.fps} FPS • ${cfg.upscalerMode.label}")
-            add("[Shaders] ${_shaderCacheReport.value.statusNote}")
-            add("[Audio] ${cfg.audioBackend.label} • Volume ${(cfg.masterVolume * 100).toInt()}%")
-            add("[Core] Aviso: libstarodyssey.so (recompilação ARM64 AOT do jogo comercial) não está incluído neste APK — executando mount RomFS/ExeFS + pipeline GLES 3.0.")
-        }
-
-        _bootSession.value = BootSessionState(
-            isMounted = true,
-            sourceLabel = dump.programName ?: dump.fileName,
-            bootLogs = logs,
-            mountedAssets = dump.entries
+        _recompileState.value = RecompileSessionState(
+            isReady = true,
+            sourceName = session.fileName,
+            buildIdHex = session.buildIdHex,
+            titleId = dump?.titleIdDetected,
+            programName = dump?.programName,
+            textCompressedBytes = session.textCompressedBytes,
+            textDecompressedBytes = session.textBytes.size,
+            rodataDecompressedBytes = session.rodataBytes.size,
+            totalInstructions = session.totalInstructions,
+            decodedInstructions = session.decodedInstructions,
+            svcCount = session.svcCount,
+            functions = session.functions,
+            rodataStrings = session.rodataStrings,
+            selectedFunction = firstFn,
+            previewLines = preview,
+            execResult = exec,
+            noticeMessage = "NSO0 recompilado para C++17 e executado na VM ARM64 em modo paisagem. Para rodar o jogo completo, exporte o projeto CMake (.zip) e ligue a um runtime Horizon OS (nn::*) + NVN→Vulkan."
         )
-        _currentTab.value = RecompTab.RUNTIME
     }
 
     fun refreshHardware() {
@@ -379,22 +512,6 @@ class RecompViewModel(application: Application) : AndroidViewModel(application),
         }
     }
 
-    fun saveScreenshot(uri: Uri, bitmap: Bitmap) {
-        viewModelScope.launch {
-            try {
-                repo.saveScreenshotToUri(uri, bitmap)
-                bitmap.recycle()
-                _feedbackMessage.value = "Captura 3D salva em PNG."
-            } catch (e: Exception) {
-                _feedbackMessage.value = "Erro ao salvar captura: ${e.message}"
-            }
-        }
-    }
-
-    fun setRuntimeRenderMode(mode: RuntimeRenderMode) {
-        _runtimeRenderMode.value = mode
-    }
-
     fun toggleAmbientBgm(enabled: Boolean = !_isBgmActive.value) {
         _isBgmActive.value = enabled
         audioEngine.setBgmEnabled(enabled)
@@ -424,10 +541,6 @@ class RecompViewModel(application: Application) : AndroidViewModel(application),
                 vib?.vibrate(durationMs)
             }
         }
-    }
-
-    fun updateRuntimeTelemetry(telemetry: RuntimeTelemetry) {
-        _runtimeTelemetry.value = telemetry
     }
 
     fun updateVirtualSticks(lx: Float? = null, ly: Float? = null, rx: Float? = null, ry: Float? = null) {

@@ -47,7 +47,7 @@ import com.example.ui.components.PowerMoonNavRail
 import com.example.ui.components.PowerMoonTopBar
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.LibraryScreen
-import com.example.ui.screens.RuntimeViewportScreen
+import com.example.ui.screens.RecompilerScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.CappyCyan
 import com.example.ui.theme.ObsidianBackground
@@ -98,10 +98,8 @@ fun PowerMoonApp(viewModel: RecompViewModel) {
     val shaderCache by viewModel.shaderCacheReport.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
     val gamepadState by viewModel.gamepadState.collectAsStateWithLifecycle()
-    val runtimeTelemetry by viewModel.runtimeTelemetry.collectAsStateWithLifecycle()
-    val renderMode by viewModel.runtimeRenderMode.collectAsStateWithLifecycle()
-    val isBgmActive by viewModel.isBgmActive.collectAsStateWithLifecycle()
-    val bootSession by viewModel.bootSession.collectAsStateWithLifecycle()
+    val recompileState by viewModel.recompileState.collectAsStateWithLifecycle()
+    val sarcReport by viewModel.sarcReport.collectAsStateWithLifecycle()
     val showMissingDumpDialog by viewModel.showMissingDumpDialog.collectAsStateWithLifecycle()
     val feedbackMessage by viewModel.feedbackMessage.collectAsStateWithLifecycle()
 
@@ -116,24 +114,17 @@ fun PowerMoonApp(viewModel: RecompViewModel) {
     }
 
     if (currentTab == RecompTab.RUNTIME) {
-        RuntimeViewportScreen(
-            config = config,
-            dumpReport = dumpReport,
-            bootSession = bootSession,
-            mods = mods,
-            gamepadState = gamepadState,
-            telemetry = runtimeTelemetry,
-            renderMode = renderMode,
-            isBgmActive = isBgmActive,
-            onTelemetry = viewModel::updateRuntimeTelemetry,
-            onUpdateConfig = viewModel::updateConfig,
-            onSetRenderMode = viewModel::setRuntimeRenderMode,
-            onToggleBgm = viewModel::toggleAmbientBgm,
-            onToggleMod = viewModel::toggleMod,
-            onVirtualSticks = viewModel::updateVirtualSticks,
-            onVirtualButton = viewModel::setVirtualButton,
-            onSaveScreenshot = viewModel::saveScreenshot,
-            onExitRuntime = { viewModel.selectTab(RecompTab.HOME) }
+        RecompilerScreen(
+            state = recompileState,
+            sarcReport = sarcReport,
+            isBusy = isBusy,
+            onPickNsoFile = viewModel::recompileFromNsoUri,
+            onSelectFunction = viewModel::selectLiftedFunction,
+            onExecuteFunction = viewModel::executeRecompiledFunction,
+            onExportZip = viewModel::exportRecompiledProjectZip,
+            onPickSzsFile = viewModel::inspectRomfsSzs,
+            onExportSarcEntry = viewModel::exportSarcEntry,
+            onExit = { viewModel.selectTab(RecompTab.HOME) }
         )
         return
     }
@@ -196,8 +187,9 @@ fun PowerMoonApp(viewModel: RecompViewModel) {
                             isBusy = isBusy,
                             showMissingDumpDialog = showMissingDumpDialog,
                             onApplyPreset = viewModel::applyQualityPreset,
-                            onLaunchGame = viewModel::launchGame,
-                            onSelectRomfsAndLaunch = viewModel::importRomfsAndLaunch,
+                            onLaunchRecompiler = viewModel::launchRecompiler,
+                            onSelectRomfsAndRecompile = viewModel::importRomfsAndRecompile,
+                            onSelectNsoAndRecompile = viewModel::recompileFromNsoUri,
                             onDismissMissingDumpDialog = viewModel::dismissMissingDumpDialog,
                             onNavigate = viewModel::selectTab
                         )

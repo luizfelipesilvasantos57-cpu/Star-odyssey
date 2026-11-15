@@ -23,6 +23,8 @@ import com.example.model.KeysValidationResult
 import com.example.model.RecompConfig
 import com.example.model.ResolutionScale
 import com.example.model.RomfsMod
+import com.example.model.SarcArchiveReport
+import com.example.model.SarcEntry
 import com.example.model.TargetFramerate
 import com.example.model.UpscalerMode
 import kotlinx.coroutines.Dispatchers
@@ -200,15 +202,63 @@ class RecompRepository(private val context: Context) {
     }
 
     suspend fun importBinaryDump(uri: Uri): GameDumpReport = withContext(Dispatchers.IO) {
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: SecurityException) {
+            // Temporary provider access only.
+        }
         val (fileName, size) = resolveNameAndSize(uri)
-        val report = context.contentResolver.openInputStream(uri)?.use { stream ->
+        val rawReport = context.contentResolver.openInputStream(uri)?.use { stream ->
             SwitchFormatParser.inspectBinaryDump(stream, fileName ?: "dump.bin", size)
         } ?: throw IllegalStateException("Não foi possível abrir o arquivo.")
+
+        val report = if (rawReport.sourceType == DumpSourceType.NSO0_EXECUTABLE && rawReport.magicValid) {
+            rawReport.copy(mainNsoUriString = uri.toString())
+        } else {
+            rawReport
+        }
 
         context.recompDataStore.edit { prefs ->
             prefs[Keys.DUMP_JSON] = serializeDump(report)
         }
         report
+    }
+
+    suspend fun loadNsoForRecompile(uri: Uri): Arm64StaticLifter.LoadedNsoSession = withContext(Dispatchers.IO) {
+        val (fileName, _) = resolveNameAndSize(uri)
+        context.contentResolver.openInputStream(uri)?.use { stream ->
+            Arm64StaticLifter.loadAndAnalyzeNso0(stream, fileName ?: "main")
+        } ?: throw IllegalStateException("Não foi possível abrir o arquivo NSO0 (main).")
+    }
+
+    suspend fun exportRecompiledZip(
+        uri: Uri,
+        session: Arm64StaticLifter.LoadedNsoSession,
+        titleId: String?,
+        programName: String?
+    ) = withContext(Dispatchers.IO) {
+        context.contentResolver.openOutputStream(uri)?.use { out ->
+            Arm64StaticLifter.exportRecompiledProjectZip(session, titleId, programName, out)
+        } ?: throw IllegalStateException("Não foi possível gravar o arquivo .zip recompilado.")
+    }
+
+    suspend fun inspectSzsArchive(uri: Uri): Pair<SarcArchiveReport, ByteArray> = withContext(Dispatchers.IO) {
+        val (fileName, _) = resolveNameAndSize(uri)
+        val raw = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: throw IllegalStateException("Não foi possível ler o arquivo RomFS.")
+        Yaz0SarcParser.inspectArchive(raw, fileName ?: "archive.szs")
+    }
+
+    suspend fun exportSarcEntry(uri: Uri, payload: ByteArray, entry: SarcEntry) = withContext(Dispatchers.IO) {
+        context.contentResolver.openOutputStream(uri)?.use { out ->
+            val end = (entry.offset + entry.sizeBytes).coerceAtMost(payload.size)
+            if (entry.offset in 0..end) {
+                out.write(payload, entry.offset, end - entry.offset)
+            }
+        } ?: throw IllegalStateException("Não foi possível exportar a entrada SARC.")
     }
 
     suspend fun importRomfsTree(treeUri: Uri): GameDumpReport = withContext(Dispatchers.IO) {
@@ -539,6 +589,7 @@ class RecompRepository(private val context: Context) {
         put("romfsFileCount", d.romfsFileCount)
         put("sha256Prefix", d.sha256Prefix)
         put("treeUriString", d.treeUriString ?: "")
+        put("mainNsoUriString", d.mainNsoUriString ?: "")
         put("verifiedAtMillis", d.verifiedAtMillis)
         put("summaryMessage", d.summaryMessage)
         put("romfsFoldersFound", JSONArray(d.romfsFoldersFound))
@@ -587,6 +638,7 @@ class RecompRepository(private val context: Context) {
             romfsFileCount = o.optInt("romfsFileCount"),
             sha256Prefix = o.optString("sha256Prefix"),
             treeUriString = o.optString("treeUriString").ifEmpty { null },
+            mainNsoUriString = o.optString("mainNsoUriString").ifEmpty { null },
             verifiedAtMillis = o.optLong("verifiedAtMillis"),
             summaryMessage = o.optString("summaryMessage")
         )

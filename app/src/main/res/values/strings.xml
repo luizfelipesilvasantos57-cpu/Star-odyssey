@@ -11,8 +11,8 @@
     <!-- Dashboard -->
     <string name="hero_badge">ANDROID NATIVE PORT • RECOMP v1.0</string>
     <string name="hero_title">Star Odyssey</string>
-    <string name="hero_subtitle">Runtime nativo, validador NSP/XCI/NSO0, gerenciador RomFS e pipeline 3D para Android.</string>
-    <string name="btn_launch_runtime">Iniciar Jogo</string>
+    <string name="hero_subtitle">Recompilador estático ARM64 → C++17 (NSO0/LZ4), extrator Yaz0/SARC e gerenciador BYOD.</string>
+    <string name="btn_launch_runtime">Recompilar Jogo</string>
     <string name="btn_configure_dump">Configurar Dump</string>
     <string name="section_readiness">Status do Sistema (BYOD)</string>
     <string name="section_hardware">Telemetria do Dispositivo</string>

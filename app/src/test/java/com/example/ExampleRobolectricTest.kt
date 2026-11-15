@@ -2,7 +2,11 @@ package com.example
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.example.core.Arm64StaticLifter
+import com.example.core.Lz4BlockDecoder
+import com.example.core.RecompExecutionEngine
 import com.example.core.SwitchFormatParser
+import com.example.core.Yaz0SarcParser
 import com.example.model.DumpSourceType
 import com.example.model.RecompConfig
 import com.example.model.ResolutionScale
@@ -14,8 +18,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.zip.ZipInputStream
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -26,7 +32,7 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
         assertEquals("Star Odyssey", appName)
-        assertEquals("Iniciar Jogo", context.getString(R.string.btn_launch_runtime))
+        assertEquals("Recompilar Jogo", context.getString(R.string.btn_launch_runtime))
     }
 
     @Test
@@ -144,5 +150,107 @@ class ExampleRobolectricTest {
         assertFalse(cfg.frameInterpolation)
         assertTrue(cfg.colorBandingFix)
         assertTrue(cfg.showTouchOverlay)
+    }
+
+    @Test
+    fun `arm64 static lifter decompresses lz4 nso0 and emits compilable cpp zip`() {
+        // Real ARM64 instructions:
+        // 0x00: MOVZ X0, #0x42   -> 0xD2800840
+        // 0x04: BL +0x8 (0x0C)   -> 0x94000002
+        // 0x08: RET              -> 0xD65F03C0
+        // 0x0C: SVC #0x21        -> 0xD4000421
+        // 0x10: RET              -> 0xD65F03C0
+        val insns = intArrayOf(
+            0xD2800840.toInt(),
+            0x94000002.toInt(),
+            0xD65F03C0.toInt(),
+            0xD4000421.toInt(),
+            0xD65F03C0.toInt()
+        )
+        val rawText = ByteBuffer.allocate(insns.size * 4).order(ByteOrder.LITTLE_ENDIAN).apply {
+            insns.forEach { putInt(it) }
+        }.array()
+        val lz4Text = Lz4BlockDecoder.compressSimple(rawText)
+
+        val nsoHeader = ByteBuffer.allocate(0x100 + lz4Text.size).order(ByteOrder.LITTLE_ENDIAN)
+        nsoHeader.put("NSO0".toByteArray(Charsets.US_ASCII))
+        nsoHeader.position(0x0C)
+        nsoHeader.putInt(0x01) // .text is LZ4 compressed
+        nsoHeader.putInt(0x100) // text file offset
+        nsoHeader.putInt(0) // mem offset
+        nsoHeader.putInt(rawText.size) // decompressed text size
+        nsoHeader.position(0x60)
+        nsoHeader.putInt(lz4Text.size) // compressed text size
+        nsoHeader.position(0x100)
+        nsoHeader.put(lz4Text)
+
+        val session = Arm64StaticLifter.loadAndAnalyzeNso0(nsoHeader.array().inputStream(), "main")
+        assertEquals(5, session.totalInstructions)
+        assertEquals(5, session.decodedInstructions)
+        assertEquals(1, session.svcCount)
+        assertTrue(session.functions.any { it.name == "sub_00000000" })
+        assertTrue(session.functions.any { it.name == "sub_0000000c" })
+
+        val preview = Arm64StaticLifter.liftFunctionPreview(session.textBytes, session.functions[0])
+        assertTrue(preview.any { it.asm.startsWith("MOVZ X0") && it.cpp.contains("0x42ULL") })
+        assertTrue(preview.any { it.asm.contains("BL sub_0000000c") })
+
+        val zipOut = ByteArrayOutputStream()
+        Arm64StaticLifter.exportRecompiledProjectZip(session, "0100000000010000", "Odyssey", zipOut)
+        val entries = mutableListOf<String>()
+        ZipInputStream(zipOut.toByteArray().inputStream()).use { zis ->
+            var e = zis.nextEntry
+            while (e != null) {
+                entries.add(e.name)
+                e = zis.nextEntry
+            }
+        }
+        assertTrue("CMakeLists.txt" in entries)
+        assertTrue("src/recomp_functions.cpp" in entries)
+        assertTrue("include/recomp_runtime.h" in entries)
+
+        val exec = RecompExecutionEngine.execute(session, 0)
+        assertEquals("sub_00000000", exec.entryFunction)
+        assertEquals(3, exec.stepsExecuted) // MOVZ -> BL -> SVC
+        assertTrue(exec.haltReason.contains("svcSendSyncRequest"))
+        assertTrue(exec.registers.any { it.first == "X0" && it.second == "0x0000000000000042" })
+    }
+
+    @Test
+    fun `yaz0 sarc parser inspects synthetic sarc archive entries`() {
+        val fileBytes = "YB\u0000\u0000demo".toByteArray(Charsets.US_ASCII)
+        val nameBytes = "Stage.byml\u0000\u0000".toByteArray(Charsets.US_ASCII) // 12 bytes (4-aligned)
+        val dataOffset = 0x14 + 0x0C + 16 + 0x08 + nameBytes.size
+        val buf = ByteBuffer.allocate(dataOffset + fileBytes.size).order(ByteOrder.LITTLE_ENDIAN)
+        buf.put("SARC".toByteArray(Charsets.US_ASCII))
+        buf.putShort(0x14)
+        buf.putShort(0xFEFF.toShort()) // LE BOM in little-endian short -> 0xFF 0xFE
+        buf.putInt(dataOffset + fileBytes.size)
+        buf.putInt(dataOffset)
+        buf.putShort(0x0100)
+        buf.putShort(0)
+
+        // SFAT
+        buf.put("SFAT".toByteArray(Charsets.US_ASCII))
+        buf.putShort(0x0C)
+        buf.putShort(1)
+        buf.putInt(0x65)
+        buf.putInt(0x12345678)
+        buf.putInt(0x01000000) // has filename at word offset 0
+        buf.putInt(0)
+        buf.putInt(fileBytes.size)
+
+        // SFNT
+        buf.put("SFNT".toByteArray(Charsets.US_ASCII))
+        buf.putShort(0x08)
+        buf.putShort(0)
+        buf.put(nameBytes)
+        buf.put(fileBytes)
+
+        val (report, _) = Yaz0SarcParser.inspectArchive(buf.array(), "Demo.szs")
+        assertFalse(report.wasYaz0)
+        assertEquals(1, report.entries.size)
+        assertEquals("Stage.byml", report.entries[0].name)
+        assertEquals("BYML", report.entries[0].formatTag)
     }
 }

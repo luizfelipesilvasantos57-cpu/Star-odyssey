@@ -35,8 +35,20 @@ object ShaderCacheManager {
         val startMs = System.currentTimeMillis()
 
         val shaderPairs = listOf(
-            PowerMoonGlRenderer.SCENE_VERTEX_SHADER to PowerMoonGlRenderer.SCENE_FRAGMENT_SHADER,
-            PowerMoonGlRenderer.POST_VERTEX_SHADER to PowerMoonGlRenderer.POST_FRAGMENT_SHADER
+            """#version 300 es
+                layout(location = 0) in vec3 aPos;
+                void main() { gl_Position = vec4(aPos, 1.0); }""" to
+                """#version 300 es
+                precision mediump float;
+                out vec4 fragColor;
+                void main() { fragColor = vec4(0.1, 0.2, 0.3, 1.0); }""",
+            """#version 300 es
+                in vec2 aPos; in vec2 aUv; out vec2 vUv;
+                void main() { vUv = aUv; gl_Position = vec4(aPos, 0.0, 1.0); }""" to
+                """#version 300 es
+                precision mediump float;
+                in vec2 vUv; out vec4 fragColor;
+                void main() { fragColor = vec4(vUv, 0.0, 1.0); }"""
         )
 
         var compiledPrograms = 0

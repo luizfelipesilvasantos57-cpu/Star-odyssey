@@ -85,8 +85,9 @@ fun HomeScreen(
     isBusy: Boolean,
     showMissingDumpDialog: Boolean,
     onApplyPreset: (QualityPreset) -> Unit,
-    onLaunchGame: () -> Unit,
-    onSelectRomfsAndLaunch: (Uri) -> Unit,
+    onLaunchRecompiler: () -> Unit,
+    onSelectRomfsAndRecompile: (Uri) -> Unit,
+    onSelectNsoAndRecompile: (Uri) -> Unit,
     onDismissMissingDumpDialog: () -> Unit,
     onNavigate: (RecompTab) -> Unit
 ) {
@@ -94,7 +95,14 @@ fun HomeScreen(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
         if (uri != null) {
-            onSelectRomfsAndLaunch(uri)
+            onSelectRomfsAndRecompile(uri)
+        }
+    }
+    val nsoLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            onSelectNsoAndRecompile(uri)
         }
     }
 
@@ -172,7 +180,7 @@ fun HomeScreen(
                                 text = if (dumpReport?.magicValid == true) {
                                     "${dumpReport.programName ?: dumpReport.fileName} • ${dumpReport.magicLabel}"
                                 } else {
-                                    "Runtime nativo BYOD, analisador NSP/XCI/NSO0, RomFS/ExeFS e pipeline 3D."
+                                    "Lifter estático ARM64 → C++17 (NSO0/LZ4), extrator RomFS (Yaz0/SARC) e exportador CMake."
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary
@@ -181,7 +189,7 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.height(4.dp))
 
                             Button(
-                                onClick = onLaunchGame,
+                                onClick = onLaunchRecompiler,
                                 enabled = !isBusy,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = OdysseyCrimson,
@@ -201,7 +209,7 @@ fun HomeScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Montando RomFS/ExeFS…",
+                                        text = "Recompilando NSO0…",
                                         style = MaterialTheme.typography.labelLarge
                                     )
                                 } else {
@@ -276,14 +284,14 @@ fun HomeScreen(
             containerColor = ObsidianSurface,
             title = {
                 Text(
-                    text = "Dump RomFS / ExeFS necessário",
+                    text = "Selecionar ExeFS / RomFS",
                     style = MaterialTheme.typography.titleLarge,
                     color = TextPrimary
                 )
             },
             text = {
                 Text(
-                    text = "Nenhum diretório RomFS/ExeFS ou container NSP/XCI/NSO0 válido está montado ainda. Selecione a pasta com seu RomFS e ExeFS para iniciar.",
+                    text = "Para recompilar para C++17, selecione sua pasta com RomFS/ExeFS ou escolha diretamente o arquivo main (NSO0) do ExeFS.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary
                 )
@@ -292,26 +300,26 @@ fun HomeScreen(
                 Button(
                     onClick = {
                         onDismissMissingDumpDialog()
-                        romfsLauncher.launch(null)
+                        nsoLauncher.launch(arrayOf("*/*"))
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = OdysseyCrimson,
                         contentColor = TextPrimary
                     ),
-                    modifier = Modifier.testTag("dialog_select_romfs_button")
+                    modifier = Modifier.testTag("dialog_select_nso_button")
                 ) {
-                    Text("Selecionar RomFS / ExeFS")
+                    Text("Arquivo main (NSO0)")
                 }
             },
             dismissButton = {
                 TextButton(
                     onClick = {
                         onDismissMissingDumpDialog()
-                        onNavigate(RecompTab.LIBRARY)
+                        romfsLauncher.launch(null)
                     },
-                    modifier = Modifier.testTag("dialog_open_library_button")
+                    modifier = Modifier.testTag("dialog_select_romfs_button")
                 ) {
-                    Text("Abrir Biblioteca", color = CappyCyan)
+                    Text("Pasta RomFS/ExeFS", color = CappyCyan)
                 }
             }
         )

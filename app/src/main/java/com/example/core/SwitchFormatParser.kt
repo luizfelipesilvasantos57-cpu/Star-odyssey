@@ -397,6 +397,7 @@ object SwitchFormatParser {
         var hasMainNso = false
         var hasNpdm = false
         var mainNsoReport: GameDumpReport? = null
+        var mainNsoUriString: String? = null
         var npdmProgramName: String? = null
         var npdmTitleId: String? = null
 
@@ -445,6 +446,7 @@ object SwitchFormatParser {
                             if (name == "main" || name == "main.nso") {
                                 hasMainNso = true
                                 val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childId)
+                                mainNsoUriString = docUri.toString()
                                 mainNsoReport = try {
                                     context.contentResolver.openInputStream(docUri)?.use { s ->
                                         inspectBinaryDump(s, name, size)
@@ -515,6 +517,7 @@ object SwitchFormatParser {
             romfsFoldersFound = foundDirs.sorted(),
             romfsFileCount = fileCount,
             treeUriString = treeUri.toString(),
+            mainNsoUriString = mainNsoUriString,
             summaryMessage = buildString {
                 if (!npdmProgramName.isNullOrBlank()) append("$npdmProgramName • ")
                 append("$fileCount arquivo(s) (${formatByteSize(totalBytes)}). ")

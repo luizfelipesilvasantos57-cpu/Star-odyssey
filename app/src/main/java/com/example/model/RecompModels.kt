@@ -57,12 +57,6 @@ enum class DumpSourceType(val label: String) {
     ROMFS_DIRECTORY("RomFS/ExeFS")
 }
 
-enum class RuntimeRenderMode(val label: String) {
-    SHADED("Padrão"),
-    WIREFRAME("Wireframe"),
-    NIGHT_AURA("Aura Lunar")
-}
-
 data class DeviceCapabilities(
     val deviceModel: String = "",
     val androidVersion: String = "",
@@ -125,15 +119,66 @@ data class GameDumpReport(
     val romfsFileCount: Int = 0,
     val sha256Prefix: String = "",
     val treeUriString: String? = null,
+    val mainNsoUriString: String? = null,
     val verifiedAtMillis: Long = System.currentTimeMillis(),
     val summaryMessage: String = ""
 )
 
-data class BootSessionState(
-    val isMounted: Boolean = false,
-    val sourceLabel: String = "",
-    val bootLogs: List<String> = emptyList(),
-    val mountedAssets: List<ContainerEntry> = emptyList()
+data class LiftedFunctionMeta(
+    val name: String,
+    val startOffset: Int,
+    val endOffset: Int,
+    val insnCount: Int,
+    val svcCalls: List<Int> = emptyList()
+)
+
+data class LiftedInstructionLine(
+    val offsetHex: String,
+    val rawHex: String,
+    val asm: String,
+    val cpp: String
+)
+
+data class RecompExecResult(
+    val entryFunction: String,
+    val stepsExecuted: Int,
+    val haltReason: String,
+    val registers: List<Pair<String, String>>,
+    val traceLogs: List<String>
+)
+
+data class RecompileSessionState(
+    val isReady: Boolean = false,
+    val sourceName: String = "",
+    val buildIdHex: String = "",
+    val titleId: String? = null,
+    val programName: String? = null,
+    val textCompressedBytes: Int = 0,
+    val textDecompressedBytes: Int = 0,
+    val rodataDecompressedBytes: Int = 0,
+    val totalInstructions: Int = 0,
+    val decodedInstructions: Int = 0,
+    val svcCount: Int = 0,
+    val functions: List<LiftedFunctionMeta> = emptyList(),
+    val rodataStrings: List<String> = emptyList(),
+    val selectedFunction: LiftedFunctionMeta? = null,
+    val previewLines: List<LiftedInstructionLine> = emptyList(),
+    val execResult: RecompExecResult? = null,
+    val noticeMessage: String = ""
+)
+
+data class SarcEntry(
+    val name: String,
+    val offset: Int,
+    val sizeBytes: Int,
+    val formatTag: String
+)
+
+data class SarcArchiveReport(
+    val fileName: String,
+    val wasYaz0: Boolean,
+    val decompressedBytes: Int,
+    val entries: List<SarcEntry>
 )
 
 data class RomfsMod(
@@ -196,12 +241,4 @@ data class LiveGamepadState(
     val gyroY: Float = 0f,
     val gyroZ: Float = 0f,
     val lastEventLabel: String = "Aguardando entrada"
-)
-
-data class RuntimeTelemetry(
-    val fps: Float = 0f,
-    val frameTimeMs: Float = 0f,
-    val renderWidth: Int = 0,
-    val renderHeight: Int = 0,
-    val drawCalls: Int = 0
 )
