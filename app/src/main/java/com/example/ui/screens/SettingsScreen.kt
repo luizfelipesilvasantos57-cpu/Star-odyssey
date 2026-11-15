@@ -37,6 +37,7 @@ import com.example.model.AudioBackend
 import com.example.model.DeviceCapabilities
 import com.example.model.GraphicsBackend
 import com.example.model.LiveGamepadState
+import com.example.model.OdysseyGameVersion
 import com.example.model.RecompConfig
 import com.example.model.ResolutionScale
 import com.example.model.ShaderCacheReport
@@ -113,6 +114,15 @@ fun SettingsScreen(
                     SettingsSegment.VIDEO -> {
                         MinimalGroupCard(title = "Renderização") {
                             DropdownSettingRow(
+                                title = "Versão de Super Mario Odyssey",
+                                subtitle = "Alvo para mapeamento de Build ID e patches",
+                                options = OdysseyGameVersion.entries,
+                                selected = config.preferredGameVersion,
+                                optionLabel = { it.label },
+                                testTag = "dd_game_version",
+                                onSelect = { v -> onUpdateConfig { it.copy(preferredGameVersion = v) } }
+                            )
+                            DropdownSettingRow(
                                 title = "Backend Gráfico",
                                 subtitle = capabilities.vulkanVersionLabel,
                                 options = GraphicsBackend.entries,
@@ -176,10 +186,22 @@ fun SettingsScreen(
                                 onSelect = { lvl -> onUpdateConfig { it.copy(anisotropicLevel = lvl) } }
                             )
                             SettingToggleRow(
-                                title = "Interpolação 120 FPS",
+                                title = "Frame Generation (60 → 120 FPS)",
                                 checked = config.frameInterpolation,
                                 testTag = "toggle_interpolation",
                                 onCheckedChange = { v -> onUpdateConfig { it.copy(frameInterpolation = v) } }
+                            )
+                            SettingToggleRow(
+                                title = "Otimização Adreno/Turnip (TU_DEBUG=nolrz)",
+                                checked = config.adrenoNoLrzFix,
+                                testTag = "toggle_adreno_nolrz",
+                                onCheckedChange = { v -> onUpdateConfig { it.copy(adrenoNoLrzFix = v) } }
+                            )
+                            SettingToggleRow(
+                                title = "Reciclagem de Descritores Vulkan",
+                                checked = config.recycleVulkanDescriptors,
+                                testTag = "toggle_recycle_descriptors",
+                                onCheckedChange = { v -> onUpdateConfig { it.copy(recycleVulkanDescriptors = v) } }
                             )
                             SettingToggleRow(
                                 title = "Correção de Banding (Dithering)",

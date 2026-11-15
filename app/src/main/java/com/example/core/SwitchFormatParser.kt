@@ -184,7 +184,7 @@ object SwitchFormatParser {
             summaryMessage = if (isEncryptedNcaName) {
                 "NCA criptografado detectado. Use o NSP/XCI completo junto de prod.keys."
             } else {
-                "Esperado cabeçalho PFS0 (.nsp), HEAD (.xci), NSO0 (main) ou NCA."
+                "Esperado cabeçalho PFS0 (.nsp), HEAD (.xci), ExeFS/'main' (NSO0) ou NCA."
             }
         )
     }
@@ -376,7 +376,7 @@ object SwitchFormatParser {
             fileName = fileName,
             fileSizeBytes = totalSize,
             magicValid = true,
-            magicLabel = "NSO0 ARM64 Executável",
+            magicLabel = "ExeFS (main) ARM64 Executável",
             buildIdHex = buildId,
             nsoTextSize = textSize,
             nsoRodataSize = roSize,
@@ -384,7 +384,7 @@ object SwitchFormatParser {
             nsoBssSize = bssSize,
             entries = entries,
             sha256Prefix = shaPrefix,
-            summaryMessage = "Binário NSO0 válido (.text=${formatByteSize(textSize)}, Build ID=${buildId.take(16)}…)."
+            summaryMessage = "Binário ExeFS ('main') válido (.text=${formatByteSize(textSize)}, Build ID=${buildId.take(16)}…)."
         )
     }
 
@@ -502,7 +502,7 @@ object SwitchFormatParser {
             magicLabel = when {
                 isOdysseyLayout && hasMainNso -> "RomFS + ExeFS Prontos"
                 isOdysseyLayout -> "Estrutura RomFS Verificada"
-                hasMainNso -> "ExeFS (NSO0) Verificado"
+                hasMainNso -> "ExeFS (main) Verificado"
                 else -> "Pasta Digitalizada"
             },
             titleIdDetected = npdmTitleId ?: if (isOdysseyLayout) ODYSSEY_BASE_TID.uppercase(Locale.ROOT) else null,

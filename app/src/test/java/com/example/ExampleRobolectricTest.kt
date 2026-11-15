@@ -143,13 +143,45 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `default recomp config has expected defaults`() {
+    fun `default recomp config has expected defaults and lasrecomp options`() {
         val cfg = RecompConfig()
         assertEquals(ResolutionScale.NATIVE_1080P, cfg.resolutionScale)
         assertEquals(TargetFramerate.FPS_60, cfg.targetFramerate)
         assertFalse(cfg.frameInterpolation)
         assertTrue(cfg.colorBandingFix)
         assertTrue(cfg.showTouchOverlay)
+        assertTrue(cfg.recycleVulkanDescriptors)
+        assertFalse(cfg.adrenoNoLrzFix)
+        assertEquals(com.example.model.OdysseyGameVersion.V1_3_0, cfg.preferredGameVersion)
+        assertTrue(com.example.model.UpscalerMode.entries.contains(com.example.model.UpscalerMode.SNAPDRAGON_SGSR_1))
+    }
+
+    @Test
+    fun `persist on device build writes cpp zip and reloads build state`() = kotlinx.coroutines.runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = com.example.core.RecompRepository(context)
+        val rawText = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putInt(0xD2800840.toInt())
+            putInt(0xD65F03C0.toInt())
+        }.array()
+        val nsoHeader = ByteBuffer.allocate(0x100 + rawText.size).order(ByteOrder.LITTLE_ENDIAN).apply {
+            put("NSO0".toByteArray(Charsets.US_ASCII))
+            position(0x0C)
+            putInt(0)
+            putInt(0x100)
+            putInt(0)
+            putInt(rawText.size)
+            position(0x100)
+            put(rawText)
+        }.array()
+        val session = Arm64StaticLifter.loadAndAnalyzeNso0(nsoHeader.inputStream(), "main")
+        val built = repo.persistOnDeviceBuild(session, "0100000000010000", "Super Mario Odyssey 1.3.0")
+        assertTrue(built.isBuilt)
+        assertTrue(java.io.File(built.buildDirPath, "odyssey_recomp_cpp.zip").exists())
+
+        val reloaded = repo.loadPersistedBuildState()
+        assertTrue(reloaded.isBuilt)
+        assertEquals(session.functions.size, reloaded.discoveredFunctions)
     }
 
     @Test
@@ -252,5 +284,68 @@ class ExampleRobolectricTest {
         assertEquals(1, report.entries.size)
         assertEquals("Stage.byml", report.entries[0].name)
         assertEquals("BYML", report.entries[0].formatTag)
+    }
+
+    @Test
+    fun `arm64 lifter skips leading zero mod0 padding and executes extended opcodes`() {
+        // 0x00: 0x00000000 (MOD0 padding - must be skipped!)
+        // 0x04: B +0x4 -> jumps to 0x08 (0x14000001)
+        // 0x08: MOVZ X0, #6 (0xD28000C0)
+        // 0x0C: MOVZ X1, #7 (0xD28000E1)
+        // 0x10: MUL X2, X0, X1 (0x9B017C02 -> X2 = 42)
+        // 0x14: CMP X2, #42 (0xF100A85F -> Z=1)
+        // 0x18: CSET X3, EQ (0x9A9F17E3 -> cond=NE(1), CSET X3, EQ -> X3 = 1)
+        // 0x1C: ADD X0, X2, X3 (0x8B030040 -> X0 = 43)
+        // 0x20: STRB W0, [SP] (0x390003E0)
+        // 0x24: LDRB W4, [SP] (0x394003E4 -> X4 = 43)
+        // 0x28: TBNZ W0, #0, +8 -> jumps to 0x30 (0x36000040? Wait TBNZ is 0x37000040)
+        // 0x2C: MOVZ X0, #0 (skipped!)
+        // 0x30: RET (0xD65F03C0)
+        val insns = intArrayOf(
+            0x00000000,
+            0x14000001,
+            0xD28000C0.toInt(),
+            0xD28000E1.toInt(),
+            0x9B017C02.toInt(),
+            0xF100A85F.toInt(),
+            0x9A9F17E3.toInt(),
+            0x8B030040.toInt(),
+            0x390003E0,
+            0x394003E4,
+            0x37000040,
+            0xD2800000.toInt(),
+            0xD65F03C0.toInt()
+        )
+        val rawText = ByteBuffer.allocate(insns.size * 4).order(ByteOrder.LITTLE_ENDIAN).apply {
+            insns.forEach { putInt(it) }
+        }.array()
+        // Add a BL 0x08 at end or let 0x04 be unrecognized? Actually 0x00 is 0, so let's add a prologue at 0x08 via STP X29, X30, [SP, #-16]! or BL
+        // Even better: add BL 0x08 at 0x34 so entry 0x08 is discovered cleanly!
+        val fullText = ByteBuffer.allocate(rawText.size + 8).order(ByteOrder.LITTLE_ENDIAN).apply {
+            put(rawText)
+            // at 0x34: BL -0x2C -> offset 0x34 + (-0x2C) = 0x08 -> imm26 = -11 = 0x03FFFFF5 -> 0x97FFFFF5
+            putInt(0x97FFFFF5.toInt())
+            putInt(0xD65F03C0.toInt())
+        }.array()
+
+        val nsoHeader = ByteBuffer.allocate(0x100 + fullText.size).order(ByteOrder.LITTLE_ENDIAN)
+        nsoHeader.put("NSO0".toByteArray(Charsets.US_ASCII))
+        nsoHeader.position(0x0C)
+        nsoHeader.putInt(0) // uncompressed
+        nsoHeader.putInt(0x100) // text file offset
+        nsoHeader.putInt(0) // mem offset
+        nsoHeader.putInt(fullText.size)
+        nsoHeader.position(0x100)
+        nsoHeader.put(fullText)
+
+        val session = Arm64StaticLifter.loadAndAnalyzeNso0(nsoHeader.array().inputStream(), "main")
+        assertFalse("sub_00000000 must not exist when offset 0 is 0x00000000", session.functions.any { it.name == "sub_00000000" })
+        assertTrue(session.functions.any { it.name == "sub_00000008" })
+
+        val exec = RecompExecutionEngine.execute(session, 0x08)
+        assertTrue(exec.haltReason.contains("Retorno normal"))
+        assertTrue(exec.registers.any { it.first == "X0" && it.second == "0x000000000000002B" }) // 43 = 0x2B
+        assertTrue(exec.registers.any { it.first == "X2" && it.second == "0x000000000000002A" }) // 42 = 0x2A
+        assertTrue(exec.registers.any { it.first == "X3" && it.second == "0x0000000000000001" })
     }
 }

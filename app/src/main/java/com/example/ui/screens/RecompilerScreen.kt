@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -37,9 +39,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Gamepad
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Unarchive
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,6 +61,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,6 +69,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -69,11 +77,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.core.SwitchFormatParser
 import com.example.model.LiftedFunctionMeta
+import com.example.model.LiveGamepadState
+import com.example.model.RecompConfig
 import com.example.model.RecompileSessionState
 import com.example.model.SarcArchiveReport
 import com.example.model.SarcEntry
+import com.example.model.UpscalerMode
+import com.example.ui.components.DropdownSettingRow
 import com.example.ui.components.MinimalGroupCard
+import com.example.ui.components.OdysseyTouchOverlay
 import com.example.ui.components.SegmentedPill
+import com.example.ui.components.SettingToggleRow
 import com.example.ui.components.StatusPill
 import com.example.ui.theme.CappyCyan
 import com.example.ui.theme.CappyCyanSoft
@@ -96,14 +110,20 @@ private enum class RecompilerSubTab(val label: String) {
     EXEC("Execução"),
     LIFTER("Lifter C++"),
     STRINGS("Strings"),
-    ROMFS("RomFS")
+    ROMFS("RomFS"),
+    GFX("Gráficos")
 }
 
 @Composable
 fun RecompilerScreen(
     state: RecompileSessionState,
     sarcReport: SarcArchiveReport?,
+    config: RecompConfig,
+    gamepadState: LiveGamepadState,
     isBusy: Boolean,
+    onUpdateConfig: ((RecompConfig) -> RecompConfig) -> Unit,
+    onVirtualStick: (Float?, Float?, Float?, Float?) -> Unit,
+    onVirtualButton: (String, Boolean) -> Unit,
     onPickNsoFile: (Uri) -> Unit,
     onSelectFunction: (LiftedFunctionMeta) -> Unit,
     onExecuteFunction: (LiftedFunctionMeta) -> Unit,
@@ -116,6 +136,13 @@ fun RecompilerScreen(
     var activeSubTab by remember { mutableStateOf(RecompilerSubTab.EXEC) }
     var searchQuery by remember { mutableStateOf("") }
     var pendingEntryExport by remember { mutableStateOf<SarcEntry?>(null) }
+    var showInspectorMenu by remember { mutableStateOf(!state.isReady) }
+
+    LaunchedEffect(state.isReady) {
+        if (state.isReady && state.execResult != null) {
+            showInspectorMenu = false
+        }
+    }
 
     // Switch to Landscape mode automatically when entering the recompilation execution screen
     DisposableEffect(Unit) {
@@ -142,7 +169,13 @@ fun RecompilerScreen(
         if (uri != null && entry != null) onExportSarcEntry(uri, entry)
     }
 
-    BackHandler { onExit() }
+    BackHandler {
+        if (!showInspectorMenu && state.isReady) {
+            showInspectorMenu = true
+        } else {
+            onExit()
+        }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -170,7 +203,11 @@ fun RecompilerScreen(
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = TextPrimary)
                         }
                         Column {
-                            Text("Recompilador & Execução (Paisagem)", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                            Text(
+                                text = if (showInspectorMenu) "Menu In-Game • Recompilador" else "Super Mario Odyssey • HUD Touch",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = TextPrimary
+                            )
                             Text(
                                 text = state.programName ?: state.sourceName.ifBlank { "Selecione ExeFS/main" },
                                 style = MaterialTheme.typography.labelSmall,
@@ -190,18 +227,51 @@ fun RecompilerScreen(
                                 strokeWidth = 2.dp
                             )
                         }
-                        if (state.isReady) {
-                            StatusPill(
-                                text = "${state.functions.size} fn • ${state.svcCount} SVC",
-                                color = ReadyEmerald,
-                                backgroundColor = ReadyEmeraldSoft
-                            )
-                        }
                         StatusPill(
-                            text = "PAISAGEM",
+                            text = "${config.resolutionScale.badge} • ${config.targetFramerate.fps}fps" +
+                                if (config.frameInterpolation) "+FG" else "",
+                            color = PowerMoonGold,
+                            backgroundColor = PowerMoonGoldSoft
+                        )
+                        StatusPill(
+                            text = if (config.adrenoNoLrzFix) "${config.upscalerMode.shortTag}•nolrz" else config.upscalerMode.shortTag,
                             color = CappyCyan,
                             backgroundColor = CappyCyanSoft
                         )
+                        if (!showInspectorMenu) {
+                            IconButton(
+                                onClick = {
+                                    onUpdateConfig { it.copy(showTouchOverlay = !it.showTouchOverlay) }
+                                },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("toggle_hud_touch_visibility")
+                            ) {
+                                Icon(
+                                    imageVector = if (config.showTouchOverlay) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                    contentDescription = "Alternar controles virtuais",
+                                    tint = CappyCyan
+                                )
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = { showInspectorMenu = !showInspectorMenu },
+                            modifier = Modifier.height(40.dp).testTag("toggle_inspector_button"),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (showInspectorMenu) Icons.Filled.Gamepad else Icons.Filled.Menu,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = PowerMoonGold
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = if (showInspectorMenu) "Voltar ao HUD" else "+ Menu / C++",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = TextPrimary
+                            )
+                        }
                     }
                 }
             }
@@ -213,22 +283,136 @@ fun RecompilerScreen(
                 .padding(innerPadding)
                 .navigationBarsPadding()
         ) {
-            val isLandscapeSplit = maxWidth >= 600.dp
+            if (!showInspectorMenu) {
+                LandscapeTouchHudViewport(
+                    state = state,
+                    config = config,
+                    gamepadState = gamepadState,
+                    isBusy = isBusy,
+                    onExecuteSelected = {
+                        state.selectedFunction?.let(onExecuteFunction)
+                    },
+                    onOpenMenu = { showInspectorMenu = true },
+                    onVirtualStick = onVirtualStick,
+                    onVirtualButton = onVirtualButton
+                )
+            } else {
+                val isLandscapeSplit = maxWidth >= 600.dp
 
-            if (isLandscapeSplit) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Left Pane: Controls, Subtabs & Lists
-                    LazyColumn(
+                if (isLandscapeSplit) {
+                    Row(
                         modifier = Modifier
-                            .weight(0.44f)
-                            .fillMaxHeight(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        contentPadding = PaddingValues(bottom = 12.dp)
+                            .fillMaxSize()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        LazyColumn(
+                            modifier = Modifier
+                                .weight(0.44f)
+                                .fillMaxHeight(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            contentPadding = PaddingValues(bottom = 12.dp)
+                        ) {
+                            item {
+                                LeftControlsBlock(
+                                    state = state,
+                                    activeSubTab = activeSubTab,
+                                    searchQuery = searchQuery,
+                                    isBusy = isBusy,
+                                    onSelectTab = { activeSubTab = it },
+                                    onSearchChange = { searchQuery = it },
+                                    onPickNso = { nsoPicker.launch(arrayOf("*/*")) },
+                                    onExportZip = { zipExporter.launch("star_odyssey_recomp_cpp.zip") },
+                                    onPickSzs = { szsPicker.launch(arrayOf("*/*")) },
+                                    onExecuteSelected = {
+                                        state.selectedFunction?.let(onExecuteFunction)
+                                    }
+                                )
+                            }
+
+                            when (activeSubTab) {
+                                RecompilerSubTab.EXEC, RecompilerSubTab.LIFTER -> {
+                                    val filtered = state.functions.filter {
+                                        searchQuery.isBlank() ||
+                                            it.name.contains(searchQuery, true) ||
+                                            (searchQuery.equals("svc", true) && it.svcCalls.isNotEmpty())
+                                    }.take(80)
+                                    items(filtered, key = { it.name }) { fn ->
+                                        FunctionRowCard(
+                                            fn = fn,
+                                            isSelected = state.selectedFunction?.name == fn.name,
+                                            onClick = {
+                                                if (activeSubTab == RecompilerSubTab.EXEC) {
+                                                    onExecuteFunction(fn)
+                                                } else {
+                                                    onSelectFunction(fn)
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                                RecompilerSubTab.STRINGS -> {
+                                    val filtered = state.rodataStrings.filter {
+                                        searchQuery.isBlank() || it.contains(searchQuery, true)
+                                    }.take(120)
+                                    items(filtered) { str ->
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = ObsidianSurface,
+                                            border = BorderStroke(1.dp, ObsidianBorder.copy(alpha = 0.6f)),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text(
+                                                text = str,
+                                                fontFamily = FontFamily.Monospace,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = TextSecondary,
+                                                modifier = Modifier.padding(10.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                RecompilerSubTab.ROMFS -> {
+                                    if (sarcReport != null) {
+                                        items(sarcReport.entries.take(120)) { entry ->
+                                            SarcEntryCard(
+                                                entry = entry,
+                                                onExport = {
+                                                    pendingEntryExport = entry
+                                                    entryExporter.launch(entry.name.substringAfterLast('/'))
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                                RecompilerSubTab.GFX -> Unit
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .weight(0.56f)
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            RightDetailPane(
+                                activeSubTab = activeSubTab,
+                                state = state,
+                                config = config,
+                                sarcReport = sarcReport,
+                                onUpdateConfig = onUpdateConfig,
+                                onExecuteSelected = {
+                                    state.selectedFunction?.let(onExecuteFunction)
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         item {
                             LeftControlsBlock(
@@ -246,118 +430,175 @@ fun RecompilerScreen(
                                 }
                             )
                         }
+                        item {
+                            RightDetailPane(
+                                activeSubTab = activeSubTab,
+                                state = state,
+                                config = config,
+                                sarcReport = sarcReport,
+                                onUpdateConfig = onUpdateConfig,
+                                onExecuteSelected = {
+                                    state.selectedFunction?.let(onExecuteFunction)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
-                        when (activeSubTab) {
-                            RecompilerSubTab.EXEC, RecompilerSubTab.LIFTER -> {
-                                val filtered = state.functions.filter {
-                                    searchQuery.isBlank() ||
-                                        it.name.contains(searchQuery, true) ||
-                                        (searchQuery.equals("svc", true) && it.svcCalls.isNotEmpty())
-                                }.take(80)
-                                items(filtered, key = { it.name }) { fn ->
-                                    FunctionRowCard(
-                                        fn = fn,
-                                        isSelected = state.selectedFunction?.name == fn.name,
-                                        onClick = {
-                                            if (activeSubTab == RecompilerSubTab.EXEC) {
-                                                onExecuteFunction(fn)
-                                            } else {
-                                                onSelectFunction(fn)
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                            RecompilerSubTab.STRINGS -> {
-                                val filtered = state.rodataStrings.filter {
-                                    searchQuery.isBlank() || it.contains(searchQuery, true)
-                                }.take(120)
-                                items(filtered) { str ->
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = ObsidianSurface,
-                                        border = BorderStroke(1.dp, ObsidianBorder.copy(alpha = 0.6f)),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text(
-                                            text = str,
-                                            fontFamily = FontFamily.Monospace,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = TextSecondary,
-                                            modifier = Modifier.padding(10.dp)
-                                        )
-                                    }
-                                }
-                            }
-                            RecompilerSubTab.ROMFS -> {
-                                if (sarcReport != null) {
-                                    items(sarcReport.entries.take(120)) { entry ->
-                                        SarcEntryCard(
-                                            entry = entry,
-                                            onExport = {
-                                                pendingEntryExport = entry
-                                                entryExporter.launch(entry.name.substringAfterLast('/'))
-                                            }
-                                        )
-                                    }
+@Composable
+private fun LandscapeTouchHudViewport(
+    state: RecompileSessionState,
+    config: RecompConfig,
+    gamepadState: LiveGamepadState,
+    isBusy: Boolean,
+    onExecuteSelected: () -> Unit,
+    onOpenMenu: () -> Unit,
+    onVirtualStick: (Float?, Float?, Float?, Float?) -> Unit,
+    onVirtualButton: (String, Boolean) -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(ObsidianSurfaceElevated, ObsidianBackground)
+                )
+            )
+    ) {
+        // Center Telemetry & ARM64 Sandbox Viewport
+        Surface(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 12.dp, start = 16.dp, end = 16.dp)
+                .widthIn(max = 520.dp)
+                .fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            color = ObsidianSurface.copy(alpha = 0.90f),
+            border = BorderStroke(1.dp, ObsidianBorder)
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val exec = state.execResult
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = exec?.entryFunction ?: state.selectedFunction?.name ?: "Sem função carregada",
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = PowerMoonGold
+                        )
+                        Text(
+                            text = exec?.haltReason ?: "Sandbox ARM64 pronto para execução.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Button(
+                        onClick = onExecuteSelected,
+                        enabled = state.isReady && state.selectedFunction != null && !isBusy,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = PowerMoonGold,
+                            contentColor = ObsidianBackground
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .height(40.dp)
+                            .testTag("hud_execute_button"),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Executar", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+
+                if (exec != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        exec.registers.take(3).forEach { (reg, hex) ->
+                            Surface(
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp),
+                                color = ObsidianBackground
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(reg, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall, color = CappyCyan)
+                                    Text(hex.takeLast(8), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelSmall, color = TextPrimary)
                                 }
                             }
                         }
                     }
-
-                    // Right Pane: Live Execution Output / Lifted C++17 Viewer
-                    Column(
-                        modifier = Modifier
-                            .weight(0.56f)
-                            .fillMaxHeight()
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        RightDetailPane(
-                            activeSubTab = activeSubTab,
-                            state = state,
-                            sarcReport = sarcReport,
-                            onExecuteSelected = {
-                                state.selectedFunction?.let(onExecuteFunction)
-                            }
+                    val highlightTrace = exec.traceLogs.lastOrNull {
+                        it.startsWith("[RODATA]") || it.startsWith("[SVC]") || it.startsWith("[VM]")
+                    } ?: exec.traceLogs.lastOrNull()
+                    if (!highlightTrace.isNullOrBlank()) {
+                        Text(
+                            text = highlightTrace,
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = ReadyEmerald,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
-            } else {
-                // Fallback portrait single-column layout
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+
+                HorizontalDivider(color = ObsidianBorder.copy(alpha = 0.4f))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    item {
-                        LeftControlsBlock(
-                            state = state,
-                            activeSubTab = activeSubTab,
-                            searchQuery = searchQuery,
-                            isBusy = isBusy,
-                            onSelectTab = { activeSubTab = it },
-                            onSearchChange = { searchQuery = it },
-                            onPickNso = { nsoPicker.launch(arrayOf("*/*")) },
-                            onExportZip = { zipExporter.launch("star_odyssey_recomp_cpp.zip") },
-                            onPickSzs = { szsPicker.launch(arrayOf("*/*")) },
-                            onExecuteSelected = {
-                                state.selectedFunction?.let(onExecuteFunction)
-                            }
-                        )
-                    }
-                    item {
-                        RightDetailPane(
-                            activeSubTab = activeSubTab,
-                            state = state,
-                            sarcReport = sarcReport,
-                            onExecuteSelected = {
-                                state.selectedFunction?.let(onExecuteFunction)
-                            }
-                        )
-                    }
+                    Text(
+                        text = String.format(
+                            Locale.US,
+                            "Stick (%.2f, %.2f) • %s",
+                            gamepadState.leftX,
+                            gamepadState.leftY,
+                            gamepadState.lastEventLabel
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = CappyCyan,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "Sandbox ARM64 • + Menu para C++/Shaders",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextMuted
+                    )
                 }
             }
+        }
+
+        if (config.showTouchOverlay) {
+            OdysseyTouchOverlay(
+                gamepadState = gamepadState,
+                scale = config.touchOverlayScale,
+                opacity = config.touchOverlayOpacity,
+                onVirtualStick = onVirtualStick,
+                onVirtualButton = onVirtualButton,
+                onOpenMenu = onOpenMenu
+            )
         }
     }
 }
@@ -384,7 +625,7 @@ private fun LeftControlsBlock(
             onSelect = onSelectTab
         )
 
-        MinimalGroupCard(title = "Controle NSO0 / RomFS") {
+        MinimalGroupCard(title = "Controle ExeFS / RomFS") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = onPickNso,
@@ -454,10 +695,12 @@ private fun LeftControlsBlock(
 private fun RightDetailPane(
     activeSubTab: RecompilerSubTab,
     state: RecompileSessionState,
+    config: RecompConfig,
     sarcReport: SarcArchiveReport?,
+    onUpdateConfig: ((RecompConfig) -> RecompConfig) -> Unit,
     onExecuteSelected: () -> Unit
 ) {
-    if (state.noticeMessage.isNotBlank()) {
+    if (state.noticeMessage.isNotBlank() && activeSubTab != RecompilerSubTab.GFX) {
         Surface(
             shape = RoundedCornerShape(14.dp),
             color = ObsidianSurfaceElevated,
@@ -497,7 +740,6 @@ private fun RightDetailPane(
 
                     HorizontalDivider(color = ObsidianBorder.copy(alpha = 0.5f))
 
-                    // Register Grid
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         exec.registers.chunked(2).forEach { pair ->
                             Row(
@@ -530,7 +772,6 @@ private fun RightDetailPane(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(10.dp))
                             .background(ObsidianBackground)
-                            .horizontalScroll(rememberScrollState())
                             .padding(10.dp),
                         verticalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
@@ -552,7 +793,7 @@ private fun RightDetailPane(
             } else {
                 MinimalGroupCard(title = "Execução Recompilada") {
                     Text(
-                        text = "Carregue um ExeFS/main (NSO0) para recompilar e executar as instruções ARM64 aqui em modo paisagem.",
+                        text = "Carregue o arquivo 'main' da pasta ExeFS para recompilar e executar instruções ARM64 aqui em modo paisagem.",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary
                     )
@@ -632,6 +873,43 @@ private fun RightDetailPane(
                         color = TextSecondary
                     )
                 }
+            }
+        }
+
+        RecompilerSubTab.GFX -> {
+            MinimalGroupCard(title = "Ajustes Rápidos In-Game (Vulkan & Touch)") {
+                DropdownSettingRow(
+                    title = "Upscaler",
+                    options = UpscalerMode.entries,
+                    selected = config.upscalerMode,
+                    optionLabel = { it.label },
+                    testTag = "ingame_dd_upscaler",
+                    onSelect = { u -> onUpdateConfig { it.copy(upscalerMode = u) } }
+                )
+                SettingToggleRow(
+                    title = "Frame Generation (60 → 120 FPS)",
+                    checked = config.frameInterpolation,
+                    testTag = "ingame_toggle_fg",
+                    onCheckedChange = { v -> onUpdateConfig { it.copy(frameInterpolation = v) } }
+                )
+                SettingToggleRow(
+                    title = "Otimização Adreno/Turnip (TU_DEBUG=nolrz)",
+                    checked = config.adrenoNoLrzFix,
+                    testTag = "ingame_toggle_nolrz",
+                    onCheckedChange = { v -> onUpdateConfig { it.copy(adrenoNoLrzFix = v) } }
+                )
+                SettingToggleRow(
+                    title = "Reciclagem de Descritores Vulkan",
+                    checked = config.recycleVulkanDescriptors,
+                    testTag = "ingame_toggle_desc",
+                    onCheckedChange = { v -> onUpdateConfig { it.copy(recycleVulkanDescriptors = v) } }
+                )
+                SettingToggleRow(
+                    title = "Exibir HUD Touch na Tela",
+                    checked = config.showTouchOverlay,
+                    testTag = "ingame_toggle_touch",
+                    onCheckedChange = { v -> onUpdateConfig { it.copy(showTouchOverlay = v) } }
+                )
             }
         }
     }

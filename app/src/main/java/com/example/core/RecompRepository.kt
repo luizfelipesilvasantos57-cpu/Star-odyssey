@@ -15,11 +15,14 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.model.AspectRatioMode
 import com.example.model.AudioBackend
+import com.example.model.BuildStage
 import com.example.model.ContainerEntry
 import com.example.model.DumpSourceType
 import com.example.model.GameDumpReport
 import com.example.model.GraphicsBackend
 import com.example.model.KeysValidationResult
+import com.example.model.OdysseyGameVersion
+import com.example.model.OnDeviceBuildState
 import com.example.model.RecompConfig
 import com.example.model.ResolutionScale
 import com.example.model.RomfsMod
@@ -54,6 +57,9 @@ class RecompRepository(private val context: Context) {
         val PRECOMPILE_SHADERS = booleanPreferencesKey("precompile_shaders")
         val VSYNC_ENABLED = booleanPreferencesKey("vsync_enabled")
         val ANISOTROPIC_LEVEL = intPreferencesKey("anisotropic_level")
+        val ADRENO_NOLRZ_FIX = booleanPreferencesKey("adreno_nolrz_fix")
+        val RECYCLE_DESCRIPTORS = booleanPreferencesKey("recycle_descriptors")
+        val PREFERRED_GAME_VERSION = stringPreferencesKey("preferred_game_version")
         val AUDIO_BACKEND = stringPreferencesKey("audio_backend")
         val MASTER_VOLUME = floatPreferencesKey("master_volume")
         val BGM_VOLUME = floatPreferencesKey("bgm_volume")
@@ -75,6 +81,7 @@ class RecompRepository(private val context: Context) {
     }
     private val keysDir: File by lazy { File(recompRootDir, "keys").apply { mkdirs() } }
     private val modsDir: File by lazy { File(recompRootDir, "mods").apply { mkdirs() } }
+    private val odysseyBuildDir: File by lazy { File(recompRootDir, "odyssey_build").apply { mkdirs() } }
     private val configFile: File by lazy { File(recompRootDir, "recomp_config.json") }
 
     val configFlow: Flow<RecompConfig> = context.recompDataStore.data.map { prefs ->
@@ -90,6 +97,9 @@ class RecompRepository(private val context: Context) {
             precompileShaders = prefs[Keys.PRECOMPILE_SHADERS] ?: true,
             vsyncEnabled = prefs[Keys.VSYNC_ENABLED] ?: true,
             anisotropicLevel = prefs[Keys.ANISOTROPIC_LEVEL] ?: 8,
+            adrenoNoLrzFix = prefs[Keys.ADRENO_NOLRZ_FIX] ?: false,
+            recycleVulkanDescriptors = prefs[Keys.RECYCLE_DESCRIPTORS] ?: true,
+            preferredGameVersion = enumValueOrDefault(prefs[Keys.PREFERRED_GAME_VERSION], OdysseyGameVersion.V1_3_0),
             audioBackend = enumValueOrDefault(prefs[Keys.AUDIO_BACKEND], AudioBackend.AAUDIO_LOW_LATENCY),
             masterVolume = prefs[Keys.MASTER_VOLUME] ?: 0.85f,
             bgmVolume = prefs[Keys.BGM_VOLUME] ?: 0.80f,
@@ -132,6 +142,9 @@ class RecompRepository(private val context: Context) {
             prefs[Keys.PRECOMPILE_SHADERS] = config.precompileShaders
             prefs[Keys.VSYNC_ENABLED] = config.vsyncEnabled
             prefs[Keys.ANISOTROPIC_LEVEL] = config.anisotropicLevel
+            prefs[Keys.ADRENO_NOLRZ_FIX] = config.adrenoNoLrzFix
+            prefs[Keys.RECYCLE_DESCRIPTORS] = config.recycleVulkanDescriptors
+            prefs[Keys.PREFERRED_GAME_VERSION] = config.preferredGameVersion.name
             prefs[Keys.AUDIO_BACKEND] = config.audioBackend.name
             prefs[Keys.MASTER_VOLUME] = config.masterVolume
             prefs[Keys.BGM_VOLUME] = config.bgmVolume
@@ -231,7 +244,7 @@ class RecompRepository(private val context: Context) {
         val (fileName, _) = resolveNameAndSize(uri)
         context.contentResolver.openInputStream(uri)?.use { stream ->
             Arm64StaticLifter.loadAndAnalyzeNso0(stream, fileName ?: "main")
-        } ?: throw IllegalStateException("Não foi possível abrir o arquivo NSO0 (main).")
+        } ?: throw IllegalStateException("Não foi possível abrir o arquivo 'main' do ExeFS.")
     }
 
     suspend fun exportRecompiledZip(
@@ -243,6 +256,68 @@ class RecompRepository(private val context: Context) {
         context.contentResolver.openOutputStream(uri)?.use { out ->
             Arm64StaticLifter.exportRecompiledProjectZip(session, titleId, programName, out)
         } ?: throw IllegalStateException("Não foi possível gravar o arquivo .zip recompilado.")
+    }
+
+    suspend fun persistOnDeviceBuild(
+        session: Arm64StaticLifter.LoadedNsoSession,
+        titleId: String?,
+        programName: String?
+    ): OnDeviceBuildState = withContext(Dispatchers.IO) {
+        val archiveFile = File(odysseyBuildDir, "odyssey_recomp_cpp.zip")
+        FileOutputStream(archiveFile).use { fos ->
+            Arm64StaticLifter.exportRecompiledProjectZip(
+                session = session,
+                titleId = titleId,
+                programName = programName,
+                outStream = fos,
+                maxFunctions = 1200
+            )
+        }
+        val builtAt = System.currentTimeMillis()
+        val manifestFile = File(odysseyBuildDir, "build_state.json")
+        val json = JSONObject().apply {
+            put("isBuilt", true)
+            put("buildIdHex", session.buildIdHex)
+            put("discoveredFunctions", session.functions.size)
+            put("textBytes", session.textBytes.size)
+            put("builtAtMillis", builtAt)
+            put("programName", programName ?: "Super Mario Odyssey")
+            put("titleId", titleId ?: "0100000000010000")
+            put("detailMessage", "${session.functions.size} funções ARM64 → C++17 prontas (${SwitchFormatParser.formatByteSize(session.textBytes.size.toLong())})")
+        }
+        manifestFile.writeText(json.toString(2))
+        OnDeviceBuildState(
+            stage = BuildStage.READY,
+            progress = 1f,
+            detailMessage = json.getString("detailMessage"),
+            isBuilt = true,
+            buildDirPath = odysseyBuildDir.absolutePath,
+            buildIdHex = session.buildIdHex,
+            discoveredFunctions = session.functions.size,
+            textBytes = session.textBytes.size,
+            builtAtMillis = builtAt
+        )
+    }
+
+    fun loadPersistedBuildState(): OnDeviceBuildState {
+        val manifestFile = File(odysseyBuildDir, "build_state.json")
+        if (!manifestFile.exists()) return OnDeviceBuildState()
+        return try {
+            val o = JSONObject(manifestFile.readText())
+            OnDeviceBuildState(
+                stage = if (o.optBoolean("isBuilt")) BuildStage.READY else BuildStage.IDLE,
+                progress = if (o.optBoolean("isBuilt")) 1f else 0f,
+                detailMessage = o.optString("detailMessage"),
+                isBuilt = o.optBoolean("isBuilt"),
+                buildDirPath = odysseyBuildDir.absolutePath,
+                buildIdHex = o.optString("buildIdHex"),
+                discoveredFunctions = o.optInt("discoveredFunctions"),
+                textBytes = o.optInt("textBytes"),
+                builtAtMillis = o.optLong("builtAtMillis")
+            )
+        } catch (_: Exception) {
+            OnDeviceBuildState()
+        }
     }
 
     suspend fun inspectSzsArchive(uri: Uri): Pair<SarcArchiveReport, ByteArray> = withContext(Dispatchers.IO) {
@@ -298,6 +373,8 @@ class RecompRepository(private val context: Context) {
 
     suspend fun clearImportedDumps() = withContext(Dispatchers.IO) {
         File(keysDir, "prod.keys").delete()
+        odysseyBuildDir.deleteRecursively()
+        odysseyBuildDir.mkdirs()
         context.recompDataStore.edit { prefs ->
             prefs.remove(Keys.KEYS_JSON)
             prefs.remove(Keys.DUMP_JSON)
@@ -511,7 +588,8 @@ class RecompRepository(private val context: Context) {
     }
 
     private fun buildConfigJson(config: RecompConfig): JSONObject = JSONObject().apply {
-        put("project", "powermoon_recomp_android")
+        put("project", "star_odyssey_recomp_android")
+        put("game_version", config.preferredGameVersion.badge)
         put("graphics", JSONObject().apply {
             put("backend", config.graphicsBackend.name)
             put("resolution_scale", config.resolutionScale.factor.toDouble())
@@ -524,6 +602,8 @@ class RecompRepository(private val context: Context) {
             put("precompile_shaders", config.precompileShaders)
             put("vsync", config.vsyncEnabled)
             put("anisotropic_filtering", config.anisotropicLevel)
+            put("adreno_tu_debug_nolrz", config.adrenoNoLrzFix)
+            put("recycle_vulkan_descriptors", config.recycleVulkanDescriptors)
         })
         put("audio", JSONObject().apply {
             put("backend", config.audioBackend.name)

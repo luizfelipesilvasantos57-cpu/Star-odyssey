@@ -182,7 +182,7 @@ fun LibraryScreen(
                     placeholder = {
                         Text(
                             text = if (segment == LibrarySegment.DUMP) {
-                                "Filtrar entradas NCA, NSO0 ou RomFS…"
+                                "Filtrar entradas NCA, ExeFS/main ou RomFS…"
                             } else {
                                 "Filtrar mods instalados…"
                             },
@@ -245,7 +245,7 @@ fun LibraryScreen(
                     MinimalGroupCard(title = "Binário & RomFS") {
                         if (dumpReport == null) {
                             Text(
-                                text = "Suporta .nsp (PFS0), .xci (HEAD), .nca, main (NSO0) ou pasta RomFS.",
+                                text = "Suporta .nsp, .xci, .nca, arquivo 'main' (ExeFS) ou pasta RomFS/ExeFS.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary
                             )

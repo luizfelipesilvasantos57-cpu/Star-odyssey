@@ -11,19 +11,19 @@
     <!-- Dashboard -->
     <string name="hero_badge">ANDROID NATIVE PORT • RECOMP v1.0</string>
     <string name="hero_title">Star Odyssey</string>
-    <string name="hero_subtitle">Recompilador estático ARM64 → C++17 (NSO0/LZ4), extrator Yaz0/SARC e gerenciador BYOD.</string>
+    <string name="hero_subtitle">Recompilador estático ARM64 → C++17 (ExeFS/main), extrator Yaz0/SARC e gerenciador BYOD.</string>
     <string name="btn_launch_runtime">Recompilar Jogo</string>
     <string name="btn_configure_dump">Configurar Dump</string>
     <string name="section_readiness">Status do Sistema (BYOD)</string>
     <string name="section_hardware">Telemetria do Dispositivo</string>
     <string name="byod_notice_title">Arquitetura Bring Your Own Dump (BYOD)</string>
-    <string name="byod_notice_body">Este projeto não inclui arquivos protegidos por direitos autorais. Importe seu próprio dump legal (NSP, XCI, NSO0 ou RomFS) e suas chaves prod.keys via Seletor Seguro do Android.</string>
+    <string name="byod_notice_body">Este projeto não inclui arquivos protegidos por direitos autorais. Importe seu próprio dump legal (NSP, XCI, ExeFS/main ou RomFS) e suas chaves prod.keys via Seletor Seguro do Android.</string>
 
     <!-- Setup / Dump Screen -->
     <string name="setup_header_title">Validador de Dump &amp; Chaves</string>
-    <string name="setup_header_sub">Analisador binário real para prod.keys, PFS0 (.nsp), HFS0 (.xci), NSO0 (main) e árvore RomFS.</string>
+    <string name="setup_header_sub">Analisador binário real para prod.keys, .nsp, .xci, ExeFS (main) e pasta RomFS.</string>
     <string name="btn_import_keys">Importar prod.keys</string>
-    <string name="btn_import_container">Importar NSP / XCI / NSO0</string>
+    <string name="btn_import_container">Importar NSP / XCI / ExeFS</string>
     <string name="btn_import_romfs">Selecionar Pasta RomFS</string>
     <string name="btn_clear_dumps">Limpar Dados Importados</string>
 

@@ -100,6 +100,7 @@ fun PowerMoonApp(viewModel: RecompViewModel) {
     val gamepadState by viewModel.gamepadState.collectAsStateWithLifecycle()
     val recompileState by viewModel.recompileState.collectAsStateWithLifecycle()
     val sarcReport by viewModel.sarcReport.collectAsStateWithLifecycle()
+    val buildState by viewModel.buildState.collectAsStateWithLifecycle()
     val showMissingDumpDialog by viewModel.showMissingDumpDialog.collectAsStateWithLifecycle()
     val feedbackMessage by viewModel.feedbackMessage.collectAsStateWithLifecycle()
 
@@ -117,7 +118,12 @@ fun PowerMoonApp(viewModel: RecompViewModel) {
         RecompilerScreen(
             state = recompileState,
             sarcReport = sarcReport,
+            config = config,
+            gamepadState = gamepadState,
             isBusy = isBusy,
+            onUpdateConfig = viewModel::updateConfig,
+            onVirtualStick = viewModel::updateVirtualSticks,
+            onVirtualButton = viewModel::setVirtualButton,
             onPickNsoFile = viewModel::recompileFromNsoUri,
             onSelectFunction = viewModel::selectLiftedFunction,
             onExecuteFunction = viewModel::executeRecompiledFunction,
@@ -184,9 +190,12 @@ fun PowerMoonApp(viewModel: RecompViewModel) {
                             dumpReport = dumpReport,
                             mods = mods,
                             shaderCache = shaderCache,
+                            buildState = buildState,
                             isBusy = isBusy,
                             showMissingDumpDialog = showMissingDumpDialog,
                             onApplyPreset = viewModel::applyQualityPreset,
+                            onSelectOdysseyVersion = { ver -> viewModel.updateConfig { it.copy(preferredGameVersion = ver) } },
+                            onRunBuildWizard = viewModel::runOnDeviceBuildWizard,
                             onLaunchRecompiler = viewModel::launchRecompiler,
                             onSelectRomfsAndRecompile = viewModel::importRomfsAndRecompile,
                             onSelectNsoAndRecompile = viewModel::recompileFromNsoUri,

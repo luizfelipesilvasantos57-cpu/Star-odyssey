@@ -29,8 +29,38 @@ enum class TargetFramerate(val fps: Int, val label: String) {
 enum class UpscalerMode(val label: String, val shortTag: String) {
     NONE("Nativo", "OFF"),
     SMAA("SMAA", "SMAA"),
-    AMD_FSR_1("AMD FSR 1.0", "FSR1")
+    AMD_FSR_1("AMD FSR 1.0", "FSR1"),
+    SNAPDRAGON_SGSR_1("Snapdragon GSR 1", "SGSR1")
 }
+
+enum class OdysseyGameVersion(val label: String, val badge: String) {
+    V1_0_0("v1.0.0 (Base)", "1.0.0"),
+    V1_1_0("v1.1.0", "1.1.0"),
+    V1_2_0("v1.2.0", "1.2.0"),
+    V1_3_0("v1.3.0 (Atualizada)", "1.3.0")
+}
+
+enum class BuildStage(val label: String) {
+    IDLE("Aguardando arquivos"),
+    DECOMPRESSING_NSO("Descomprimindo ExeFS/main (LZ4)…"),
+    LIFTING_ARM64("Recompilando ARM64 → C++17…"),
+    INDEXING_ROMFS_SHADERS("Indexando RomFS & Shaders Vulkan…"),
+    FINALIZING_BUILD("Gravando artefatos no armazenamento privado…"),
+    READY("Build recompilada pronta"),
+    ERROR("Falha na compilação")
+}
+
+data class OnDeviceBuildState(
+    val stage: BuildStage = BuildStage.IDLE,
+    val progress: Float = 0f,
+    val detailMessage: String = "",
+    val isBuilt: Boolean = false,
+    val buildDirPath: String = "",
+    val buildIdHex: String = "",
+    val discoveredFunctions: Int = 0,
+    val textBytes: Int = 0,
+    val builtAtMillis: Long = 0L
+)
 
 enum class AspectRatioMode(val ratio: Float, val label: String, val shortTag: String) {
     RATIO_16_9(16f / 9f, "16:9 Padrão", "16:9"),
@@ -53,7 +83,7 @@ enum class DumpSourceType(val label: String) {
     NSP_PFS0("NSP (PFS0)"),
     XCI_HFS0("XCI (HFS0)"),
     NCA_CONTENT("NCA"),
-    NSO0_EXECUTABLE("NSO0 (main)"),
+    NSO0_EXECUTABLE("ExeFS (main)"),
     ROMFS_DIRECTORY("RomFS/ExeFS")
 }
 
@@ -214,6 +244,9 @@ data class RecompConfig(
     val precompileShaders: Boolean = true,
     val vsyncEnabled: Boolean = true,
     val anisotropicLevel: Int = 8,
+    val adrenoNoLrzFix: Boolean = false,
+    val recycleVulkanDescriptors: Boolean = true,
+    val preferredGameVersion: OdysseyGameVersion = OdysseyGameVersion.V1_3_0,
     val audioBackend: AudioBackend = AudioBackend.AAUDIO_LOW_LATENCY,
     val masterVolume: Float = 0.85f,
     val bgmVolume: Float = 0.70f,
