@@ -391,10 +391,14 @@ object SwitchFormatParser {
     fun scanRomfsTree(context: Context, treeUri: Uri, displayName: String): GameDumpReport {
         val rootDocId = DocumentsContract.getTreeDocumentId(treeUri)
         val foundDirs = mutableSetOf<String>()
+        val collectedFiles = mutableListOf<ContainerEntry>()
         var fileCount = 0
         var totalBytes = 0L
         var hasMainNso = false
         var hasNpdm = false
+        var mainNsoReport: GameDumpReport? = null
+        var npdmProgramName: String? = null
+        var npdmTitleId: String? = null
 
         val queue = ArrayDeque<Pair<String, Int>>()
         queue.add(rootDocId to 0)
@@ -438,8 +442,42 @@ object SwitchFormatParser {
                         } else {
                             fileCount++
                             totalBytes += size
-                            if (name == "main" || name == "main.nso") hasMainNso = true
-                            if (name == "main.npdm") hasNpdm = true
+                            if (name == "main" || name == "main.nso") {
+                                hasMainNso = true
+                                val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childId)
+                                mainNsoReport = try {
+                                    context.contentResolver.openInputStream(docUri)?.use { s ->
+                                        inspectBinaryDump(s, name, size)
+                                    }
+                                } catch (_: Exception) {
+                                    null
+                                }
+                            }
+                            if (name == "main.npdm") {
+                                hasNpdm = true
+                                val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childId)
+                                val npdmMeta = try {
+                                    context.contentResolver.openInputStream(docUri)?.use { s ->
+                                        parseNpdmMetadata(s)
+                                    }
+                                } catch (_: Exception) {
+                                    null
+                                }
+                                if (npdmMeta != null) {
+                                    npdmProgramName = npdmMeta.first
+                                    npdmTitleId = npdmMeta.second
+                                }
+                            }
+                            if (collectedFiles.size < 40 && (name.endsWith(".szs", true) || name.endsWith(".byml", true) || name.endsWith(".bfstm", true) || name == "main" || name == "main.npdm")) {
+                                collectedFiles.add(
+                                    ContainerEntry(
+                                        name = name,
+                                        offset = 0L,
+                                        sizeBytes = size,
+                                        partition = if (name == "main" || name == "main.npdm") "ExeFS" else "RomFS"
+                                    )
+                                )
+                            }
                         }
                     }
                 }
@@ -448,8 +486,9 @@ object SwitchFormatParser {
             }
         }
 
-        val isOdysseyLayout = foundDirs.any { it in EXPECTED_ROMFS_DIRS }
-        val entries = foundDirs.sorted().map {
+        val isOdysseyLayout = foundDirs.any { it in EXPECTED_ROMFS_DIRS } ||
+            npdmTitleId.equals(ODYSSEY_BASE_TID, true)
+        val dirEntries = foundDirs.sorted().map {
             ContainerEntry(name = "$it/", offset = 0L, sizeBytes = 0L, partition = if (it.equals("exefs", true)) "ExeFS" else "RomFS")
         }
 
@@ -457,18 +496,56 @@ object SwitchFormatParser {
             sourceType = DumpSourceType.ROMFS_DIRECTORY,
             fileName = displayName,
             fileSizeBytes = totalBytes,
-            magicValid = isOdysseyLayout || hasMainNso,
-            magicLabel = if (isOdysseyLayout) "Estrutura RomFS Verificada" else "Pasta Digitalizada",
+            magicValid = isOdysseyLayout || (hasMainNso && mainNsoReport?.magicValid == true),
+            magicLabel = when {
+                isOdysseyLayout && hasMainNso -> "RomFS + ExeFS Prontos"
+                isOdysseyLayout -> "Estrutura RomFS Verificada"
+                hasMainNso -> "ExeFS (NSO0) Verificado"
+                else -> "Pasta Digitalizada"
+            },
+            titleIdDetected = npdmTitleId ?: if (isOdysseyLayout) ODYSSEY_BASE_TID.uppercase(Locale.ROOT) else null,
+            programName = npdmProgramName,
             isOdysseyMatch = isOdysseyLayout,
-            entries = entries,
+            buildIdHex = mainNsoReport?.buildIdHex,
+            nsoTextSize = mainNsoReport?.nsoTextSize ?: 0L,
+            nsoRodataSize = mainNsoReport?.nsoRodataSize ?: 0L,
+            nsoDataSize = mainNsoReport?.nsoDataSize ?: 0L,
+            nsoBssSize = mainNsoReport?.nsoBssSize ?: 0L,
+            entries = (dirEntries + collectedFiles).distinctBy { it.name + it.partition },
             romfsFoldersFound = foundDirs.sorted(),
             romfsFileCount = fileCount,
+            treeUriString = treeUri.toString(),
             summaryMessage = buildString {
+                if (!npdmProgramName.isNullOrBlank()) append("$npdmProgramName • ")
                 append("$fileCount arquivo(s) (${formatByteSize(totalBytes)}). ")
                 if (foundDirs.isNotEmpty()) append("Pastas: ${foundDirs.joinToString(", ")}. ")
-                if (hasMainNso && hasNpdm) append("ExeFS (main + main.npdm) presente.")
+                if (hasMainNso && hasNpdm) append("ExeFS (main + main.npdm) montado.")
             }.trim()
         )
+    }
+
+    private fun parseNpdmMetadata(stream: InputStream): Pair<String?, String?>? {
+        val buf = ByteArray(1024)
+        val read = readFullyUpTo(stream, buf)
+        if (read < 0x80) return null
+        val magic = String(buf, 0, 4, Charsets.US_ASCII)
+        if (magic != "META") return null
+
+        val nameBytes = buf.copyOfRange(0x20, 0x30)
+        val programName = nameBytes.takeWhile { it != 0.toByte() }.toByteArray().toString(Charsets.UTF_8).trim()
+            .ifEmpty { null }
+
+        val bb = ByteBuffer.wrap(buf, 0, read).order(ByteOrder.LITTLE_ENDIAN)
+        val aci0Offset = bb.getInt(0x70)
+        var titleIdHex: String? = null
+        if (aci0Offset in 0x80..(read - 0x18)) {
+            val aciMagic = String(buf, aci0Offset, 4, Charsets.US_ASCII)
+            if (aciMagic == "ACI0") {
+                val tid = bb.getLong(aci0Offset + 0x10)
+                titleIdHex = "%016X".format(tid)
+            }
+        }
+        return programName to titleIdHex
     }
 
     private fun readFullyUpTo(stream: InputStream, dest: ByteArray, offset: Int = 0, length: Int = dest.size): Int {

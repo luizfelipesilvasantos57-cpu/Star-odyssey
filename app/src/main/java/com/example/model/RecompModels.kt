@@ -113,6 +113,7 @@ data class GameDumpReport(
     val magicValid: Boolean,
     val magicLabel: String,
     val titleIdDetected: String? = null,
+    val programName: String? = null,
     val isOdysseyMatch: Boolean = false,
     val buildIdHex: String? = null,
     val nsoTextSize: Long = 0L,
@@ -123,8 +124,16 @@ data class GameDumpReport(
     val romfsFoldersFound: List<String> = emptyList(),
     val romfsFileCount: Int = 0,
     val sha256Prefix: String = "",
+    val treeUriString: String? = null,
     val verifiedAtMillis: Long = System.currentTimeMillis(),
     val summaryMessage: String = ""
+)
+
+data class BootSessionState(
+    val isMounted: Boolean = false,
+    val sourceLabel: String = "",
+    val bootLogs: List<String> = emptyList(),
+    val mountedAssets: List<ContainerEntry> = emptyList()
 )
 
 data class RomfsMod(

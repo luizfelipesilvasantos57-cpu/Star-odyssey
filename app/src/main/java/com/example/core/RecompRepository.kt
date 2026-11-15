@@ -1,6 +1,7 @@
 package com.example.core
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
@@ -211,12 +212,38 @@ class RecompRepository(private val context: Context) {
     }
 
     suspend fun importRomfsTree(treeUri: Uri): GameDumpReport = withContext(Dispatchers.IO) {
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                treeUri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: SecurityException) {
+            // Document provider may only grant temporary access.
+        }
         val name = resolveTreeName(treeUri)
         val report = SwitchFormatParser.scanRomfsTree(context, treeUri, name)
         context.recompDataStore.edit { prefs ->
             prefs[Keys.DUMP_JSON] = serializeDump(report)
         }
         report
+    }
+
+    suspend fun rescanTreeIfAccessible(treeUriString: String): GameDumpReport? = withContext(Dispatchers.IO) {
+        return@withContext try {
+            val uri = Uri.parse(treeUriString)
+            val name = resolveTreeName(uri)
+            val report = SwitchFormatParser.scanRomfsTree(context, uri, name)
+            if (report.romfsFileCount > 0 || report.magicValid) {
+                context.recompDataStore.edit { prefs ->
+                    prefs[Keys.DUMP_JSON] = serializeDump(report)
+                }
+                report
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     suspend fun clearImportedDumps() = withContext(Dispatchers.IO) {
@@ -502,6 +529,7 @@ class RecompRepository(private val context: Context) {
         put("magicValid", d.magicValid)
         put("magicLabel", d.magicLabel)
         put("titleIdDetected", d.titleIdDetected ?: "")
+        put("programName", d.programName ?: "")
         put("isOdysseyMatch", d.isOdysseyMatch)
         put("buildIdHex", d.buildIdHex ?: "")
         put("nsoTextSize", d.nsoTextSize)
@@ -510,6 +538,7 @@ class RecompRepository(private val context: Context) {
         put("nsoBssSize", d.nsoBssSize)
         put("romfsFileCount", d.romfsFileCount)
         put("sha256Prefix", d.sha256Prefix)
+        put("treeUriString", d.treeUriString ?: "")
         put("verifiedAtMillis", d.verifiedAtMillis)
         put("summaryMessage", d.summaryMessage)
         put("romfsFoldersFound", JSONArray(d.romfsFoldersFound))
@@ -546,6 +575,7 @@ class RecompRepository(private val context: Context) {
             magicValid = o.optBoolean("magicValid"),
             magicLabel = o.optString("magicLabel"),
             titleIdDetected = o.optString("titleIdDetected").ifEmpty { null },
+            programName = o.optString("programName").ifEmpty { null },
             isOdysseyMatch = o.optBoolean("isOdysseyMatch"),
             buildIdHex = o.optString("buildIdHex").ifEmpty { null },
             nsoTextSize = o.optLong("nsoTextSize"),
@@ -556,6 +586,7 @@ class RecompRepository(private val context: Context) {
             romfsFoldersFound = dirs,
             romfsFileCount = o.optInt("romfsFileCount"),
             sha256Prefix = o.optString("sha256Prefix"),
+            treeUriString = o.optString("treeUriString").ifEmpty { null },
             verifiedAtMillis = o.optLong("verifiedAtMillis"),
             summaryMessage = o.optString("summaryMessage")
         )

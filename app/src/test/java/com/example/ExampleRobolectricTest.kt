@@ -26,6 +26,7 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
         assertEquals("Star Odyssey", appName)
+        assertEquals("Iniciar Jogo", context.getString(R.string.btn_launch_runtime))
     }
 
     @Test

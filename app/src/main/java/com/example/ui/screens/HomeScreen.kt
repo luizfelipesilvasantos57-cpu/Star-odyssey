@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -22,12 +25,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,9 +82,22 @@ fun HomeScreen(
     dumpReport: GameDumpReport?,
     mods: List<RomfsMod>,
     shaderCache: ShaderCacheReport,
+    isBusy: Boolean,
+    showMissingDumpDialog: Boolean,
     onApplyPreset: (QualityPreset) -> Unit,
+    onLaunchGame: () -> Unit,
+    onSelectRomfsAndLaunch: (Uri) -> Unit,
+    onDismissMissingDumpDialog: () -> Unit,
     onNavigate: (RecompTab) -> Unit
 ) {
+    val romfsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            onSelectRomfsAndLaunch(uri)
+        }
+    }
+
     val activePreset = when {
         config.targetFramerate == TargetFramerate.FPS_30 -> QualityPreset.BATTERY
         config.resolutionScale == ResolutionScale.ULTRA_4K && config.targetFramerate == TargetFramerate.FPS_120_UNLOCKED -> QualityPreset.ULTRA
@@ -151,9 +170,9 @@ fun HomeScreen(
 
                             Text(
                                 text = if (dumpReport?.magicValid == true) {
-                                    "${dumpReport.fileName} • ${dumpReport.magicLabel}"
+                                    "${dumpReport.programName ?: dumpReport.fileName} • ${dumpReport.magicLabel}"
                                 } else {
-                                    "Runtime nativo BYOD, analisador NSP/XCI/NSO0, mods RomFS e pipeline 3D."
+                                    "Runtime nativo BYOD, analisador NSP/XCI/NSO0, RomFS/ExeFS e pipeline 3D."
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary
@@ -162,7 +181,8 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.height(4.dp))
 
                             Button(
-                                onClick = { onNavigate(RecompTab.RUNTIME) },
+                                onClick = onLaunchGame,
+                                enabled = !isBusy,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = OdysseyCrimson,
                                     contentColor = TextPrimary
@@ -171,14 +191,27 @@ fun HomeScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(52.dp)
-                                    .testTag("launch_runtime_button")
+                                    .testTag("launch_game_button")
                             ) {
-                                Icon(Icons.Filled.PlayArrow, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Iniciar Runtime 3D",
-                                    style = MaterialTheme.typography.labelLarge
-                                )
+                                if (isBusy) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        color = TextPrimary,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Montando RomFS/ExeFS…",
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                } else {
+                                    Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = stringResource(R.string.btn_launch_runtime),
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                }
                             }
                         }
                     }
@@ -235,6 +268,53 @@ fun HomeScreen(
                 }
             }
         }
+    }
+
+    if (showMissingDumpDialog) {
+        AlertDialog(
+            onDismissRequest = onDismissMissingDumpDialog,
+            containerColor = ObsidianSurface,
+            title = {
+                Text(
+                    text = "Dump RomFS / ExeFS necessário",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "Nenhum diretório RomFS/ExeFS ou container NSP/XCI/NSO0 válido está montado ainda. Selecione a pasta com seu RomFS e ExeFS para iniciar.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDismissMissingDumpDialog()
+                        romfsLauncher.launch(null)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = OdysseyCrimson,
+                        contentColor = TextPrimary
+                    ),
+                    modifier = Modifier.testTag("dialog_select_romfs_button")
+                ) {
+                    Text("Selecionar RomFS / ExeFS")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        onDismissMissingDumpDialog()
+                        onNavigate(RecompTab.LIBRARY)
+                    },
+                    modifier = Modifier.testTag("dialog_open_library_button")
+                ) {
+                    Text("Abrir Biblioteca", color = CappyCyan)
+                }
+            }
+        )
     }
 }
 

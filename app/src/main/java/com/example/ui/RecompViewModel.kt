@@ -22,8 +22,11 @@ import com.example.core.AudioSynthEngine
 import com.example.core.HardwareProbe
 import com.example.core.RecompRepository
 import com.example.core.ShaderCacheManager
+import com.example.core.SwitchFormatParser
 import com.example.model.AspectRatioMode
+import com.example.model.BootSessionState
 import com.example.model.DeviceCapabilities
+import com.example.model.DumpSourceType
 import com.example.model.GameDumpReport
 import com.example.model.KeysValidationResult
 import com.example.model.LiveGamepadState
@@ -81,6 +84,12 @@ class RecompViewModel(application: Application) : AndroidViewModel(application),
     private val _isBgmActive = MutableStateFlow(false)
     val isBgmActive: StateFlow<Boolean> = _isBgmActive.asStateFlow()
 
+    private val _bootSession = MutableStateFlow(BootSessionState())
+    val bootSession: StateFlow<BootSessionState> = _bootSession.asStateFlow()
+
+    private val _showMissingDumpDialog = MutableStateFlow(false)
+    val showMissingDumpDialog: StateFlow<Boolean> = _showMissingDumpDialog.asStateFlow()
+
     val config: StateFlow<RecompConfig> = repo.configFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), RecompConfig())
 
@@ -126,6 +135,100 @@ class RecompViewModel(application: Application) : AndroidViewModel(application),
             toggleAmbientBgm(false)
         }
         _currentTab.value = tab
+    }
+
+    fun dismissMissingDumpDialog() {
+        _showMissingDumpDialog.value = false
+    }
+
+    fun launchGame() {
+        val currentDump = dumpReport.value
+        if (currentDump == null || !currentDump.magicValid) {
+            _showMissingDumpDialog.value = true
+            return
+        }
+        viewModelScope.launch {
+            _isBusy.value = true
+            try {
+                val treeStr = currentDump.treeUriString
+                val effectiveDump: GameDumpReport =
+                    if (currentDump.sourceType == DumpSourceType.ROMFS_DIRECTORY && !treeStr.isNullOrBlank()) {
+                        repo.rescanTreeIfAccessible(treeStr) ?: currentDump
+                    } else {
+                        currentDump
+                    }
+                prepareAndLaunchBootSession(effectiveDump)
+            } finally {
+                _isBusy.value = false
+            }
+        }
+    }
+
+    fun importRomfsAndLaunch(treeUri: Uri) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            _showMissingDumpDialog.value = false
+            try {
+                val report = repo.importRomfsTree(treeUri)
+                if (report.magicValid) {
+                    prepareAndLaunchBootSession(report)
+                } else {
+                    _feedbackMessage.value = "Pasta verificada, mas nenhum StageData/RomFS ou ExeFS (main) válido foi encontrado."
+                }
+            } catch (e: Exception) {
+                _feedbackMessage.value = "Erro ao montar RomFS/ExeFS: ${e.message}"
+            } finally {
+                _isBusy.value = false
+            }
+        }
+    }
+
+    private suspend fun prepareAndLaunchBootSession(dump: GameDumpReport) {
+        if (!_shaderCacheReport.value.isCompiled) {
+            val shaderReport = withContext(Dispatchers.Default) {
+                ShaderCacheManager.precompilePipelineShaders(getApplication())
+            }
+            _shaderCacheReport.value = shaderReport
+        }
+
+        val cfg = config.value
+        val activeMods = mods.value.filter { it.enabled }
+        val logs = buildList {
+            add("[FS] Origem montada: ${dump.fileName} (${dump.sourceType.label})")
+            if (!dump.programName.isNullOrBlank() || !dump.titleIdDetected.isNullOrBlank()) {
+                add("[ExeFS] main.npdm: ${dump.programName ?: "Desconhecido"} • TitleID=${dump.titleIdDetected ?: "N/A"}")
+            }
+            if (!dump.buildIdHex.isNullOrBlank() || dump.nsoTextSize > 0L) {
+                add(
+                    "[NSO0] ExeFS/main • .text=${SwitchFormatParser.formatByteSize(dump.nsoTextSize)} " +
+                        "• .rodata=${SwitchFormatParser.formatByteSize(dump.nsoRodataSize)} " +
+                        "• BuildID=${dump.buildIdHex?.take(16) ?: "N/A"}"
+                )
+            }
+            if (dump.romfsFileCount > 0 || dump.romfsFoldersFound.isNotEmpty()) {
+                add(
+                    "[RomFS] ${dump.romfsFileCount} arquivo(s) (${SwitchFormatParser.formatByteSize(dump.fileSizeBytes)}) • " +
+                        "Pastas: ${dump.romfsFoldersFound.joinToString(", ").ifEmpty { "raiz" }}"
+                )
+            }
+            if (activeMods.isNotEmpty()) {
+                add("[Mods] Overlay RomFS: ${activeMods.joinToString { it.name }}")
+            } else {
+                add("[Mods] Nenhum mod RomFS ativo")
+            }
+            add("[GPU] ${cfg.graphicsBackend.label} • ${cfg.resolutionScale.badge} @ ${cfg.targetFramerate.fps} FPS • ${cfg.upscalerMode.label}")
+            add("[Shaders] ${_shaderCacheReport.value.statusNote}")
+            add("[Audio] ${cfg.audioBackend.label} • Volume ${(cfg.masterVolume * 100).toInt()}%")
+            add("[Core] Aviso: libstarodyssey.so (recompilação ARM64 AOT do jogo comercial) não está incluído neste APK — executando mount RomFS/ExeFS + pipeline GLES 3.0.")
+        }
+
+        _bootSession.value = BootSessionState(
+            isMounted = true,
+            sourceLabel = dump.programName ?: dump.fileName,
+            bootLogs = logs,
+            mountedAssets = dump.entries
+        )
+        _currentTab.value = RecompTab.RUNTIME
     }
 
     fun refreshHardware() {

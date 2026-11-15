@@ -101,6 +101,8 @@ fun PowerMoonApp(viewModel: RecompViewModel) {
     val runtimeTelemetry by viewModel.runtimeTelemetry.collectAsStateWithLifecycle()
     val renderMode by viewModel.runtimeRenderMode.collectAsStateWithLifecycle()
     val isBgmActive by viewModel.isBgmActive.collectAsStateWithLifecycle()
+    val bootSession by viewModel.bootSession.collectAsStateWithLifecycle()
+    val showMissingDumpDialog by viewModel.showMissingDumpDialog.collectAsStateWithLifecycle()
     val feedbackMessage by viewModel.feedbackMessage.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -117,6 +119,7 @@ fun PowerMoonApp(viewModel: RecompViewModel) {
         RuntimeViewportScreen(
             config = config,
             dumpReport = dumpReport,
+            bootSession = bootSession,
             mods = mods,
             gamepadState = gamepadState,
             telemetry = runtimeTelemetry,
@@ -190,7 +193,12 @@ fun PowerMoonApp(viewModel: RecompViewModel) {
                             dumpReport = dumpReport,
                             mods = mods,
                             shaderCache = shaderCache,
+                            isBusy = isBusy,
+                            showMissingDumpDialog = showMissingDumpDialog,
                             onApplyPreset = viewModel::applyQualityPreset,
+                            onLaunchGame = viewModel::launchGame,
+                            onSelectRomfsAndLaunch = viewModel::importRomfsAndLaunch,
+                            onDismissMissingDumpDialog = viewModel::dismissMissingDumpDialog,
                             onNavigate = viewModel::selectTab
                         )
                         RecompTab.LIBRARY -> LibraryScreen(

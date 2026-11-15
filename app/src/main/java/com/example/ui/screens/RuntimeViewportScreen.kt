@@ -20,9 +20,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,12 +39,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -69,7 +73,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.core.PowerMoonGlRenderer
+import com.example.core.SwitchFormatParser
 import com.example.model.AspectRatioMode
+import com.example.model.BootSessionState
 import com.example.model.GameDumpReport
 import com.example.model.LiveGamepadState
 import com.example.model.RecompConfig
@@ -103,6 +109,7 @@ import kotlin.math.hypot
 fun RuntimeViewportScreen(
     config: RecompConfig,
     dumpReport: GameDumpReport?,
+    bootSession: BootSessionState,
     mods: List<RomfsMod>,
     gamepadState: LiveGamepadState,
     telemetry: RuntimeTelemetry,
@@ -121,6 +128,7 @@ fun RuntimeViewportScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var showInGameMenu by remember { mutableStateOf(false) }
+    var showBootConsole by remember(bootSession.isMounted) { mutableStateOf(bootSession.isMounted) }
     var capturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     val savePngLauncher = rememberLauncherForActivityResult(
@@ -177,7 +185,11 @@ fun RuntimeViewportScreen(
     }
 
     BackHandler {
-        if (showInGameMenu) showInGameMenu = false else onExitRuntime()
+        when {
+            showBootConsole -> showBootConsole = false
+            showInGameMenu -> showInGameMenu = false
+            else -> onExitRuntime()
+        }
     }
 
     Box(
@@ -220,9 +232,13 @@ fun RuntimeViewportScreen(
             }
 
             Surface(
+                onClick = { showBootConsole = !showBootConsole },
                 shape = RoundedCornerShape(999.dp),
                 color = ObsidianSurface.copy(alpha = 0.78f),
-                border = BorderStroke(1.dp, ObsidianBorder)
+                border = BorderStroke(1.dp, if (bootSession.isMounted) ReadyEmerald.copy(alpha = 0.7f) else ObsidianBorder),
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("toggle_boot_console_pill")
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -241,7 +257,7 @@ fun RuntimeViewportScreen(
                         color = PowerMoonGold
                     )
                     Text(
-                        text = config.upscalerMode.shortTag,
+                        text = if (bootSession.isMounted) "ExeFS/RomFS" else config.upscalerMode.shortTag,
                         style = MaterialTheme.typography.labelSmall,
                         color = CappyCyan
                     )
@@ -467,6 +483,23 @@ fun RuntimeViewportScreen(
                             .clip(RoundedCornerShape(10.dp))
                             .clickable {
                                 showInGameMenu = false
+                                showBootConsole = true
+                            }
+                            .padding(vertical = 8.dp)
+                            .testTag("open_boot_console_action"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Filled.Terminal, contentDescription = null, tint = CappyCyan)
+                        Text("Console RomFS / ExeFS", style = MaterialTheme.typography.labelLarge, color = CappyCyan)
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable {
+                                showInGameMenu = false
                                 renderer.requestFrameCapture { bmp ->
                                     capturedBitmap = bmp
                                     savePngLauncher.launch("powermoon_frame_${System.currentTimeMillis()}.png")
@@ -501,6 +534,115 @@ fun RuntimeViewportScreen(
                                     color = if (m.enabled) ReadyEmerald else TextSecondary,
                                     backgroundColor = if (m.enabled) ReadyEmeraldSoft else CappyCyanSoft
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Expandable RomFS / ExeFS Boot Console & Mounted Assets Overlay
+        AnimatedVisibility(
+            visible = showBootConsole,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(horizontal = 16.dp, vertical = 76.dp)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .widthIn(max = 560.dp)
+                    .fillMaxWidth()
+                    .testTag("boot_console_panel"),
+                shape = RoundedCornerShape(20.dp),
+                color = ObsidianSurface.copy(alpha = 0.95f),
+                border = BorderStroke(1.dp, ObsidianBorder)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Execução RomFS / ExeFS",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = bootSession.sourceLabel.ifBlank { dumpReport?.fileName ?: "Runtime GLES 3.0" },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = ReadyEmerald
+                            )
+                        }
+                        TextButton(
+                            onClick = { showBootConsole = false },
+                            modifier = Modifier.testTag("close_boot_console_button")
+                        ) {
+                            Text("Ocultar", color = PowerMoonGold)
+                        }
+                    }
+
+                    HorizontalDivider(color = ObsidianBorder.copy(alpha = 0.6f))
+
+                    if (bootSession.bootLogs.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(ObsidianBackground.copy(alpha = 0.8f))
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            bootSession.bootLogs.forEach { line ->
+                                Text(
+                                    text = line,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (line.startsWith("[Core]")) WarningAmber else TextSecondary
+                                )
+                            }
+                        }
+                    }
+
+                    if (bootSession.mountedAssets.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Entradas Montadas (${bootSession.mountedAssets.size})",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = CappyCyan
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            bootSession.mountedAssets.take(16).forEach { entry ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(ObsidianSurfaceElevated)
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "[${entry.partition}] ${entry.name}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = TextPrimary,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (entry.sizeBytes > 0L) {
+                                        Text(
+                                            text = SwitchFormatParser.formatByteSize(entry.sizeBytes),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = TextSecondary
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
